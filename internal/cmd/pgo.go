@@ -98,6 +98,7 @@ func NewPGOCommand(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	root.SetOut(stdout)
 
 	root.AddCommand(newBackupCommand(config))
+	root.AddCommand(newCloneCommand(config))
 	root.AddCommand(newCreateCommand(config))
 	root.AddCommand(newDeleteCommand(config))
 	root.AddCommand(newRestoreCommand(config))
