@@ -263,6 +263,8 @@ func cloneBackupParametersButConfigureLocalStorage(sourceBackupConf map[string]i
 	// remote and do not require volume specification.
 	for _, repo := range sourceRepos {
 		m := repo.(map[string]interface{})
+		// if the source is using repo1, use it as it is
+		// we won't use here something different
 		if m["name"] == "repo1" {
 			repos = append(repos, m)
 			break
@@ -271,9 +273,11 @@ func cloneBackupParametersButConfigureLocalStorage(sourceBackupConf map[string]i
 		schedules = m["schedules"].(map[string]interface{})
 	}
 	if len(repos) == 0 {
+		// none was found. Adding
 		repo := make(map[string]interface{})
 		repo["name"] = "repo1"
 		repo["schedules"] = schedules
+		repos = append(repos, repo)
 	}
 	pgbackrestConf["repos"] = repos
 	backupConf["pgbackrest"] = pgbackrestConf
