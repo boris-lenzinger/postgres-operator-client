@@ -11,6 +11,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+	yaml "gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -28,6 +29,8 @@ var formatterNok = color.New(color.FgHiRed)
 // from which repo we will create the clone.
 var fromRepo string
 var toNamespace string
+var showYamlOfClone bool
+var overrideConfigMapsAndSecrets bool
 
 // newBackupCommand returns the backup command of the PGO plugin.
 // It optionally takes a `repoName` and `options` flag, which it uses
@@ -49,7 +52,11 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 #### RBAC Requirements
     Resources                                           Verbs
     ---------                                           -----
-    postgresclusters.postgres-operator.crunchydata.com  [get create]`,
+    postgresclusters.postgres-operator.crunchydata.com  [get create]
+    namespace                                           [get create]
+    configmap                                           [get create delete]
+    secrets                                             [get create delete]
+`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			re := regexp.MustCompile("^repo[1-4]")
 			if !re.MatchString(fromRepo) {
@@ -68,12 +75,24 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 			if err != nil {
 				return errors.Wrapf(err, "failed to get cluster %q in namespace %q", clusterName, namespace)
 			}
+
 			clone, err := generateCloneWithLocalStorageFrom(clusterToClone, fromRepo, toNamespace)
 			if err != nil {
 				return errors.Wrap(err, "failed to generate definition of clone")
 			}
 			// if changing of namespace, we need to dump potential configurations
+
+			if showYamlOfClone {
+				content, err := yaml.Marshal(clone)
+				if err != nil {
+					return errors.Wrap(err, "failed to generate yaml for clone")
+				}
+				fmt.Printf("YAML of clone:\n%s\n", string(content))
+			}
+
 			var configMapsToDump, secretsToDump []string
+			// in case of failure, we have to know the created resources that we
+			// have to delete
 			var configMapsToDelete, secretsToDelete []string
 			if toNamespace != "" && toNamespace != clusterToClone.GetNamespace() {
 				err = createNamespaceIfNotExists(clientK8s, toNamespace)
@@ -83,7 +102,7 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 				// find out if there are configmaps or secrets to be dumped
 				configMapsToDump, secretsToDump = requiredConfigMapsAndSecretsFor(clusterToClone)
 				for _, cm := range configMapsToDump {
-					err = dumpConfigMapToNamespace(clientK8s, cm, clusterToClone.GetNamespace(), toNamespace)
+					err = dumpConfigMapToNamespace(clientK8s, cm, clusterToClone.GetNamespace(), toNamespace, overrideConfigMapsAndSecrets)
 					if err == nil {
 						reportSuccess(fmt.Sprintf("Dump configmap %q to %q", cm, toNamespace))
 						configMapsToDelete = append(configMapsToDelete, cm)
@@ -96,7 +115,7 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 					}
 				}
 				for _, secret := range secretsToDump {
-					err = dumpSecretToNamespace(clientK8s, secret, clusterToClone.GetNamespace(), toNamespace)
+					err = dumpSecretToNamespace(clientK8s, secret, clusterToClone.GetNamespace(), toNamespace, overrideConfigMapsAndSecrets)
 					if err == nil {
 						reportSuccess(fmt.Sprintf("Dump secret %q to %q", secret, toNamespace))
 						secretsToDelete = append(secretsToDelete, secret)
@@ -151,6 +170,8 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 	cmd.Args = cobra.ExactArgs(1)
 	cmd.Flags().StringVar(&fromRepo, "from-repo", "", "repo name to clone from (repo1, repo2, etc)")
 	cmd.Flags().StringVar(&toNamespace, "to-ns", "", "the target namespace where the clone will live")
+	cmd.Flags().BoolVarP(&showYamlOfClone, "show-yaml", "", false, "request to show the yaml generated for the definition of the clone")
+	cmd.Flags().BoolVarP(&overrideConfigMapsAndSecrets, "overrides-configs", "", false, "request to override configmaps and secrets if they already exist")
 
 	return cmd
 }
@@ -322,7 +343,7 @@ func reportFailure(msg string, err error) {
 	fmt.Printf("%s %s [%s]\n", msg, strings.Repeat(".", dotsCount), formatterNok.Sprintf("%s", err.Error()))
 }
 
-func dumpConfigMapToNamespace(clientK8s *kubernetes.Clientset, cmName, fromNamespace, toNamespace string) error {
+func dumpConfigMapToNamespace(clientK8s *kubernetes.Clientset, cmName, fromNamespace, toNamespace string, overrideIfExists bool) error {
 	cm, err := clientK8s.CoreV1().ConfigMaps(fromNamespace).Get(context.TODO(), cmName, metav1.GetOptions{})
 	if err != nil {
 		return errors.Wrapf(err, "failed to retrieve configmap %q from namespace %q", cmName, fromNamespace)
@@ -334,13 +355,18 @@ func dumpConfigMapToNamespace(clientK8s *kubernetes.Clientset, cmName, fromNames
 	dumpCm.Labels = filterHelmManagement(cm.Labels)
 	dumpCm.Data = cm.Data
 	_, err = clientK8s.CoreV1().ConfigMaps(toNamespace).Create(context.TODO(), &dumpCm, metav1.CreateOptions{})
-	if err != nil {
+	switch {
+	case err == nil:
+		return nil
+	case strings.Index(err.Error(), "already exists") != -1 && overrideIfExists:
+		_, err = clientK8s.CoreV1().ConfigMaps(toNamespace).Update(context.TODO(), &dumpCm, metav1.UpdateOptions{})
+		return err
+	default:
 		return errors.Wrapf(err, "failed to create dump configmap %q from ns %q to ns %q", cmName, fromNamespace, toNamespace)
 	}
-	return nil
 }
 
-func dumpSecretToNamespace(clientK8s *kubernetes.Clientset, secretName, fromNamespace, toNamespace string) error {
+func dumpSecretToNamespace(clientK8s *kubernetes.Clientset, secretName, fromNamespace, toNamespace string, overrideIfExists bool) error {
 	secret, err := clientK8s.CoreV1().Secrets(fromNamespace).Get(context.TODO(), secretName, metav1.GetOptions{})
 	if err != nil {
 		return errors.Wrapf(err, "failed to retrieve secret %q from namespace %q", secretName, fromNamespace)
@@ -352,10 +378,15 @@ func dumpSecretToNamespace(clientK8s *kubernetes.Clientset, secretName, fromName
 	dump.Labels = filterHelmManagement(secret.Labels)
 	dump.Data = secret.Data
 	_, err = clientK8s.CoreV1().Secrets(toNamespace).Create(context.TODO(), &dump, metav1.CreateOptions{})
-	if err != nil {
+	switch {
+	case err == nil:
+		return nil
+	case strings.Index(err.Error(), "already exists") != -1 && overrideIfExists:
+		_, err = clientK8s.CoreV1().Secrets(toNamespace).Update(context.TODO(), &dump, metav1.UpdateOptions{})
+		return err
+	default:
 		return errors.Wrapf(err, "failed to create dump secret %q from ns %q to ns %q", secretName, fromNamespace, toNamespace)
 	}
-	return nil
 }
 
 // best effort to delete resources
