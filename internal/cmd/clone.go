@@ -204,10 +204,36 @@ func generateCloneWithLocalStorageFrom(sourceCluster *unstructured.Unstructured,
 	for _, key := range []string{"monitoring", "openshift", "patroni", "port", "postgresVersion", "shutdown", "users"} {
 		spec[key] = specSourceCluster[key]
 	}
+	spec["metadata"] = filterMetadata(specSourceCluster["metadata"].(map[string]interface{}))
 	spec["backups"] = cloneBackupParametersButConfigureLocalStorage(specSourceCluster["backups"].(map[string]interface{}))
 	spec["instances"] = cloneInstanceParametersWithoutAntiAffinity(specSourceCluster["instances"].([]interface{}))
 	clone.Object["spec"] = spec
 	return &clone, nil
+}
+
+func filterMetadata(metadata map[string]interface{}) interface{} {
+	filtered := make(map[string]interface{})
+	labels := metadata["labels"].(map[string]string)
+	filteredLabels := make(map[string]string)
+	for k, v := range labels {
+		if k == "app.kubernetes.io/managed-by" || k == "helm.sh/chart" {
+			continue
+		}
+		filteredLabels[k] = v
+	}
+	filtered["labels"] = filteredLabels
+
+	annotations := metadata["annotations"].(map[string]string)
+	filteredAnnotations := make(map[string]string)
+	for k, v := range annotations {
+		if k == "restarted" {
+			continue
+		}
+		filteredAnnotations[k] = v
+	}
+	filtered["annotations"] = filteredLabels
+
+	return filtered
 }
 
 func repoIsValidForCluster(repoDataSource string, sourceCluster *unstructured.Unstructured) bool {
