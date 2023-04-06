@@ -213,8 +213,8 @@ func generateCloneWithLocalStorageFrom(sourceCluster *unstructured.Unstructured,
 
 func filterMetadata(metadata map[string]interface{}) interface{} {
 	filtered := make(map[string]interface{})
-	labels := metadata["labels"].(map[string]string)
-	filteredLabels := make(map[string]string)
+	labels := metadata["labels"].(map[string]interface{})
+	filteredLabels := make(map[string]interface{})
 	for k, v := range labels {
 		if k == "app.kubernetes.io/managed-by" || k == "helm.sh/chart" {
 			continue
@@ -223,8 +223,8 @@ func filterMetadata(metadata map[string]interface{}) interface{} {
 	}
 	filtered["labels"] = filteredLabels
 
-	annotations := metadata["annotations"].(map[string]string)
-	filteredAnnotations := make(map[string]string)
+	annotations := metadata["annotations"].(map[string]interface{})
+	filteredAnnotations := make(map[string]interface{})
 	for k, v := range annotations {
 		if k == "restarted" {
 			continue
