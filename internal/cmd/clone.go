@@ -231,7 +231,7 @@ func filterMetadata(metadata map[string]interface{}) interface{} {
 		}
 		filteredAnnotations[k] = v
 	}
-	filtered["annotations"] = filteredLabels
+	filtered["annotations"] = filteredAnnotations
 
 	return filtered
 }
