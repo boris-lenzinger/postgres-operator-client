@@ -5,9 +5,11 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/crunchydata/postgres-operator-client/internal"
 	"github.com/crunchydata/postgres-operator-client/internal/apis/postgres-operator.crunchydata.com/v1beta1"
+	"github.com/crunchydata/postgres-operator-client/internal/data"
 	"github.com/fatih/color"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -17,9 +19,13 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"math"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 var formatterOk = color.New(color.FgHiGreen)
@@ -31,6 +37,7 @@ var fromRepo string
 var toNamespace string
 var showYamlOfClone bool
 var overrideConfigMapsAndSecrets bool
+var pitr string
 
 // newBackupCommand returns the backup command of the PGO plugin.
 // It optionally takes a `repoName` and `options` flag, which it uses
@@ -63,6 +70,10 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 				return fmt.Errorf("the repoName option must be specified and the allowed values are repo[1-4]. Other values are rejected")
 			}
 
+			if pitr != "" && !isSyntacticallyValidPitr(pitr) {
+				return fmt.Errorf("the expected format for the PITR is '2022-12-28 15:47:38+01'. You supplied %q", pitr)
+			}
+
 			clientK8s := configureK8sClient(config.ConfigFlags)
 
 			clusterName := args[0]
@@ -74,6 +85,18 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 			clusterToClone, err := clientCrunchy.Namespace(namespace).Get(context.TODO(), clusterName, metav1.GetOptions{})
 			if err != nil {
 				return errors.Wrapf(err, "failed to get cluster %q in namespace %q", clusterName, namespace)
+			}
+
+			if pitr != "" {
+				restConfig, err := config.ToRESTConfig()
+				if err != nil {
+					return err
+				}
+
+				err = isValidPitr(restConfig, namespace, clusterToClone, fromRepo, pitr)
+				if err != nil {
+					return fmt.Errorf("PITR is not valid : %s", err.Error())
+				}
 			}
 
 			clone, err := generateCloneWithLocalStorageFrom(clusterToClone, fromRepo, toNamespace)
@@ -172,8 +195,99 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 	cmd.Flags().StringVar(&toNamespace, "to-ns", "", "the target namespace where the clone will live")
 	cmd.Flags().BoolVarP(&showYamlOfClone, "show-yaml", "", false, "request to show the yaml generated for the definition of the clone")
 	cmd.Flags().BoolVarP(&overrideConfigMapsAndSecrets, "overrides-configs", "", false, "request to override configmaps and secrets if they already exist")
+	cmd.Flags().StringVarP(&pitr, "pitr", "", "", "the point in time at which you want the clone to be restored to. Format is '2022-12-28 15:47:38+01'")
 
 	return cmd
+}
+
+// Here are the constraints on the PITR:
+// must match : YYYY-MM-DD HH:MM:SS+/-TZ
+// TZ must be less or equal than 12
+// Month must be less than 12 and larger than 0
+// hour must be less than 23 and positive or null
+// minute must be less than 60 and positive or null
+// seconds must be less than 60 and positive or null
+// must not be in the future
+// This function does not check if the time is before any backup. This is checked
+// in the code after retrieving the cluster and check its backups.
+func isSyntacticallyValidPitr(userPitr string) bool {
+	rePitr := regexp.MustCompile("^(?P<Year>[0-9]{4})-(?P<Month>[0-9]{2})-(?P<Day>[0-9]{2}) (?P<Hour>[0-9]{2}):(?P<Minute>[0-9]{2}):(?P<Second>[0-9]{2})[+-](?P<TimeZone>[0-9]{2})")
+	if !rePitr.MatchString(userPitr) {
+		return false
+	}
+	matches := rePitr.FindStringSubmatch(userPitr)
+	result := make(map[string]string)
+	for i, name := range rePitr.SubexpNames() {
+		if i != 0 && name != "" {
+			result[name] = matches[i]
+		}
+	}
+	month, _ := strconv.Atoi(result["Month"])
+	day, _ := strconv.Atoi(result["Day"])
+	hour, _ := strconv.Atoi(result["Hour"])
+	minute, _ := strconv.Atoi(result["Minute"])
+	second, _ := strconv.Atoi(result["Second"])
+	timezone, _ := strconv.Atoi(result["Timezone"])
+	switch {
+	case month <= 0 || month > 12:
+		return false
+	case day <= 0 || day > 31:
+		return false
+	case hour < 0 || hour > 23:
+		return false
+	case minute < 0 || minute > 59:
+		return false
+	case second < 0 || second > 59:
+		return false
+	case timezone < 0 || timezone > 12:
+		return false
+	}
+	return true
+}
+
+func isValidPitr(restConfig *rest.Config, namespace string, sourceCluster *unstructured.Unstructured, repoName, pitr string) error {
+	stdoutAsJson, stderr, err := getExistingBackups(restConfig, namespace, sourceCluster.GetName(), repoName, "json")
+	if err != nil {
+		return errors.Wrapf(err, "failed to get backupInfos for cluster %s/%s on repo %q", namespace, sourceCluster.GetName(), repoName)
+	}
+	if stderr != "" {
+		return fmt.Errorf("failed to get backupInfos for cluster %s/%s on repo %q due to %s", namespace, sourceCluster.GetName(), repoName, stderr)
+	}
+
+	var backupInfos data.BackupInfo
+	err = json.Unmarshal([]byte(stdoutAsJson), &backupInfos)
+	if err != nil {
+		return errors.Wrap(err, "failed to unmarshal backup lists")
+	}
+	// Compute the PITR as a date
+	timeRequested, err := time.Parse("2015-01-02 15:04:05", pitr)
+	if err != nil {
+		return errors.Wrap(err, "failed to parse pitr date")
+	}
+
+	if timestampIsAfterOneOfThoseBackup(timeRequested, backupInfos) {
+		return nil
+	}
+	return fmt.Errorf("the requested PITR is before any full backup for this cluster. Cannot restore before oldest full backup")
+}
+
+func timestampIsAfterOneOfThoseBackup(timeRequested time.Time, backupInfos data.BackupInfo) bool {
+	for _, backup := range backupInfos.Backups {
+		if backup.Type != data.Full {
+			continue
+		}
+		// we are able to restore after a full backup using the full + WALs (or
+		// using Full + diff + WALs or Full + incr + WALs)
+		startTime := time.Unix(0, convertBackupTimestampToNanoSeconds(backup.StopStartTime.Start))
+		if timeRequested.After(startTime) {
+			return true
+		}
+	}
+	return false
+}
+
+func convertBackupTimestampToNanoSeconds(t int64) int64 {
+	return int64(int64(math.Pow(10, 9)) * t)
 }
 
 func generateCloneWithLocalStorageFrom(sourceCluster *unstructured.Unstructured, repoDataSource string, targetNamespace string) (*unstructured.Unstructured, error) {
