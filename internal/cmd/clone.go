@@ -39,6 +39,8 @@ var showYamlOfClone bool
 var overrideConfigMapsAndSecrets bool
 var pitr string
 
+var rePitr = regexp.MustCompile("^(?P<Year>[0-9]{4})-(?P<Month>[0-9]{2})-(?P<Day>[0-9]{2}) (?P<Hour>[0-9]{2}):(?P<Minute>[0-9]{2}):(?P<Second>[0-9]{2})[+-](?P<TimeZone>[0-9]{2})")
+
 // newBackupCommand returns the backup command of the PGO plugin.
 // It optionally takes a `repoName` and `options` flag, which it uses
 // to update the spec.
@@ -211,7 +213,6 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 // This function does not check if the time is before any backup. This is checked
 // in the code after retrieving the cluster and check its backups.
 func isSyntacticallyValidPitr(userPitr string) bool {
-	rePitr := regexp.MustCompile("^(?P<Year>[0-9]{4})-(?P<Month>[0-9]{2})-(?P<Day>[0-9]{2}) (?P<Hour>[0-9]{2}):(?P<Minute>[0-9]{2}):(?P<Second>[0-9]{2})[+-](?P<TimeZone>[0-9]{2})")
 	if !rePitr.MatchString(userPitr) {
 		return false
 	}
@@ -227,7 +228,7 @@ func isSyntacticallyValidPitr(userPitr string) bool {
 	hour, _ := strconv.Atoi(result["Hour"])
 	minute, _ := strconv.Atoi(result["Minute"])
 	second, _ := strconv.Atoi(result["Second"])
-	timezone, _ := strconv.Atoi(result["Timezone"])
+	timezone, _ := strconv.Atoi(result["TimeZone"])
 	switch {
 	case month <= 0 || month > 12:
 		return false
@@ -260,15 +261,56 @@ func isValidPitr(restConfig *rest.Config, namespace string, sourceCluster *unstr
 		return errors.Wrap(err, "failed to unmarshal backup lists")
 	}
 	// Compute the PITR as a date
-	timeRequested, err := time.Parse("2015-01-02 15:04:05", pitr)
-	if err != nil {
-		return errors.Wrap(err, "failed to parse pitr date")
-	}
 
-	if timestampIsAfterOneOfThoseBackup(timeRequested, backupInfos) {
+	timeRequestedInUTC, err := computeTimeRequestedInUTC(pitr)
+
+	if timestampIsAfterOneOfThoseBackup(timeRequestedInUTC, backupInfos) {
 		return nil
 	}
 	return fmt.Errorf("the requested PITR is before any full backup for this cluster. Cannot restore before oldest full backup")
+}
+
+func computeTimeRequestedInUTC(pitr string) (time.Time, error) {
+	submatches := rePitr.FindStringSubmatch(pitr)
+	var year, month, day, hours, minutes, seconds, timezone string
+	for i, name := range rePitr.SubexpNames() {
+		switch {
+		case i == 0:
+			continue
+		case name == "Year":
+			year = submatches[i]
+		case name == "Month":
+			month = submatches[i]
+		case name == "Day":
+			day = submatches[i]
+		case name == "Hour":
+			hours = submatches[i]
+		case name == "Minute":
+			minutes = submatches[i]
+		case name == "Second":
+			seconds = submatches[i]
+		case name == "TimeZone":
+			timezone = submatches[i]
+		}
+	}
+	timezoneAsInt, err := strconv.Atoi(timezone)
+	if err != nil {
+		return time.Now(), errors.Wrapf(err, "failed to convert timezone %s as an integer", timezone)
+	}
+
+	pitrWithoutTZ := fmt.Sprintf("%s-%s-%s %s:%s:%s", year, month, day, hours, minutes, seconds)
+	timeRequested, err := time.Parse("2006-01-02 15:04:05", pitrWithoutTZ)
+	multiplier := +1 // if we have a positive timezone, have to shift in negative
+	if strings.Index(pitr, "+") != -1 {
+		multiplier = -1
+	}
+	// applying timezone to compute time in UTC. Times are supplied in UTC in
+	// timestamps of backups
+	timeRequested = timeRequested.Add(time.Duration(multiplier*timezoneAsInt) * time.Hour)
+	if err != nil {
+		return time.Now(), errors.Wrap(err, "failed to parse pitr date")
+	}
+	return timeRequested, nil
 }
 
 func timestampIsAfterOneOfThoseBackup(timeRequested time.Time, backupInfos data.BackupInfo) bool {
