@@ -1,5 +1,7 @@
 package data
 
+// BackupInfo is the list of objects returned by the pgbackrest info --output=json
+// command. This is the root class.
 type BackupInfo struct {
 	Archives []Archive `json:"archive"`
 	Backups  []Backup  `json:"backup"`
@@ -54,8 +56,10 @@ type Backup struct {
 	ErrorOccurred           bool              `json:"error"`
 	SizeDetails             SizeInformation   `json:"info"`
 	Label                   string            `json:"label"`
-	Prior                   *string           `json:"prior"`
-	Reference               []string          `json:"reference"`
-	StopStartTime           BackupTimestamps  `json:"timestamp"`
-	Type                    BackupType        `json:"type"`
+	// Prior indicates the name of the parent backup. This will apply to diff
+	// or incremental backups.
+	Prior         *string          `json:"prior"`
+	Reference     []string         `json:"reference"`
+	StopStartTime BackupTimestamps `json:"timestamp"`
+	Type          BackupType       `json:"type"`
 }
