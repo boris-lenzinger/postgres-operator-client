@@ -73,3 +73,6 @@ cli-docs: ## generate cli documenation
 check-cli-docs: cli-docs
 	git diff --exit-code -- docs/content/reference/
 
+.PHONY: ut
+ut:
+	go test ./...

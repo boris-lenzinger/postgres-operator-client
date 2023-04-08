@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cmd
+package processing
 
 import (
 	"errors"
@@ -34,7 +34,7 @@ func TestPGBackRestInfo(t *testing.T) {
 			assert.Assert(t, stderr != nil, "should capture stderr")
 			return expected
 		}
-		_, _, err := Executor(exec).pgBackRestInfo("text", "")
+		_, _, err := Executor(exec).PgBackRestInfo("text", "")
 		assert.ErrorContains(t, err, "pass-through")
 
 	})
@@ -49,7 +49,7 @@ func TestPGBackRestInfo(t *testing.T) {
 			assert.Assert(t, stderr != nil, "should capture stderr")
 			return expected
 		}
-		_, _, err := Executor(exec).pgBackRestInfo("text", "1")
+		_, _, err := Executor(exec).PgBackRestInfo("text", "1")
 		assert.ErrorContains(t, err, "pass-through")
 
 	})
@@ -64,7 +64,7 @@ func TestPGBackRestInfo(t *testing.T) {
 			assert.Assert(t, stderr != nil, "should capture stderr")
 			return expected
 		}
-		_, _, err := Executor(exec).pgBackRestInfo("json", "2")
+		_, _, err := Executor(exec).PgBackRestInfo("json", "2")
 		assert.ErrorContains(t, err, "pass-through")
 
 	})
@@ -82,7 +82,7 @@ func TestListPGLogFiles(t *testing.T) {
 			assert.Assert(t, stderr != nil, "should capture stderr")
 			return expected
 		}
-		_, _, err := Executor(exec).listPGLogFiles(1)
+		_, _, err := Executor(exec).ListPGLogFiles(1)
 		assert.ErrorContains(t, err, "pass-through")
 
 	})
@@ -101,7 +101,7 @@ func TestCatFile(t *testing.T) {
 			assert.Assert(t, stderr != nil, "should capture stderr")
 			return expected
 		}
-		_, _, err := Executor(exec).catFile("/path/to/file")
+		_, _, err := Executor(exec).CatFile("/path/to/file")
 		assert.ErrorContains(t, err, "pass-through")
 
 	})
@@ -115,12 +115,12 @@ func TestPatronictl(t *testing.T) {
 		exec := func(
 			stdin io.Reader, stdout, stderr io.Writer, command ...string,
 		) error {
-			assert.DeepEqual(t, command, []string{"bash", "-ceu", "--", "patronictl sub-command"})
+			assert.DeepEqual(t, command, []string{"bash", "-ceu", "--", "Patronictl sub-command"})
 			assert.Assert(t, stdout != nil, "should capture stdout")
 			assert.Assert(t, stderr != nil, "should capture stderr")
 			return expected
 		}
-		_, _, err := Executor(exec).patronictl("sub-command")
+		_, _, err := Executor(exec).Patronictl("sub-command")
 		assert.ErrorContains(t, err, "pass-through")
 
 	})
@@ -139,7 +139,7 @@ func TestProcesses(t *testing.T) {
 			assert.Assert(t, stderr != nil, "should capture stderr")
 			return expected
 		}
-		_, _, err := Executor(exec).processes()
+		_, _, err := Executor(exec).Processes()
 		assert.ErrorContains(t, err, "pass-through")
 
 	})

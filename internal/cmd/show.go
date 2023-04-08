@@ -19,19 +19,16 @@ import (
 	"fmt"
 	"github.com/crunchydata/postgres-operator-client/internal/apis/postgres-operator.crunchydata.com/v1beta1"
 	"github.com/fatih/color"
-	"io"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"os"
-	"k8s.io/client-go/rest"
 	"strings"
 
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 
 	"github.com/crunchydata/postgres-operator-client/internal"
-	"github.com/crunchydata/postgres-operator-client/internal/util"
+	"github.com/crunchydata/postgres-operator-client/internal/processing"
 )
 
 // newShowCommand returns the show subcommand of the PGO plugin. The 'show' command
@@ -114,7 +111,7 @@ pgo show backup hippo --repoName=repo1
 			return err
 		}
 
-		stdout, stderr, err := getExistingBackups(restConfig, args[0], configNamespace, repoName, output)
+		stdout, stderr, err := processing.GetExistingBackups(restConfig, args[0], configNamespace, repoName, output)
 		if err != nil {
 			return err
 		}
@@ -201,48 +198,4 @@ func displayStatusOf(pgCluster unstructured.Unstructured) {
 	}
 	_, _ = white.Printf("]")
 	fmt.Println("")
-}
-
-func getExistingBackups(restConfig *rest.Config, namespace, cluster, repoName, outputFormat string) (string, string, error) {
-	// The only thing we need is the value after 'repo' which should be an
-	// integer. If anything else is provided, we let the pgbackrest command
-	// handle validation.
-	repoNum := strings.TrimPrefix(repoName, "repo")
-
-	// Get the primary instance Pod by its labels. For a Postgres cluster
-	// named 'hippo', we'll use the following:
-	//    postgres-operator.crunchydata.com/cluster=hippo
-	//    postgres-operator.crunchydata.com/data=postgres
-	//    postgres-operator.crunchydata.com/role=master
-
-	ctx := context.Background()
-	client, err := corev1.NewForConfig(restConfig)
-	if err != nil {
-		return "", "", err
-	}
-
-	pods, err := client.Pods(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: util.PrimaryInstanceLabels(cluster),
-	})
-	if err != nil {
-		return "", "", err
-	}
-
-	if len(pods.Items) != 1 {
-		return "", "", fmt.Errorf("primary instance Pod not found")
-	}
-
-	PodExec, err := util.NewPodExecutor(restConfig)
-	if err != nil {
-		return "", "", err
-	}
-
-	// Create an executor and attempt to get the pgBackRest info output.
-	exec := func(stdin io.Reader, stdout, stderr io.Writer,
-		command ...string) error {
-		return PodExec(pods.Items[0].GetNamespace(), pods.Items[0].GetName(),
-			util.ContainerDatabase, stdin, stdout, stderr, command...)
-	}
-
-	return Executor(exec).pgBackRestInfo(outputFormat, repoNum)
 }
