@@ -72,7 +72,7 @@ func IsValidPitr(restConfig *rest.Config, namespace string, sourceCluster *unstr
 		return fmt.Errorf("failed to get backupInfos for cluster %s/%s on repo %q due to %s", namespace, sourceCluster.GetName(), repoName, stderr)
 	}
 
-	var backupInfos data.BackupInfo
+	var backupInfos []data.BackupInfo
 	err = json.Unmarshal([]byte(stdoutAsJson), &backupInfos)
 	if err != nil {
 		return errors.Wrap(err, "failed to unmarshal backup lists")
@@ -81,7 +81,7 @@ func IsValidPitr(restConfig *rest.Config, namespace string, sourceCluster *unstr
 
 	timeRequestedInUTC, err := computeTimeRequestedInUTCForPitr(pitr)
 
-	if timestampIsAfterOneOfThoseBackup(timeRequestedInUTC, backupInfos) {
+	if timestampIsAfterOneOfThoseBackup(timeRequestedInUTC, backupInfos[0]) {
 		return nil
 	}
 	return fmt.Errorf("the requested PITR is before any full backup for this cluster. Cannot restore before oldest full backup")
