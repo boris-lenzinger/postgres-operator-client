@@ -1,35 +1,18 @@
-/*
-Copyright © 2023 NAME HERE <EMAIL ADDRESS>
-*/
 package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/crunchydata/postgres-operator-client/internal"
 	"github.com/crunchydata/postgres-operator-client/internal/apis/postgres-operator.crunchydata.com/v1beta1"
-	"github.com/crunchydata/postgres-operator-client/internal/data"
-	"github.com/fatih/color"
+	"github.com/crunchydata/postgres-operator-client/internal/display"
+	"github.com/crunchydata/postgres-operator-client/internal/processing"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	yaml "gopkg.in/yaml.v2"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/cli-runtime/pkg/genericclioptions"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"math"
-	"os"
 	"regexp"
-	"strconv"
-	"strings"
-	"time"
 )
-
-var formatterOk = color.New(color.FgHiGreen)
-var formatterNok = color.New(color.FgHiRed)
 
 // holds value option repoName passed on the command line. This option determines
 // from which repo we will create the clone.
@@ -38,8 +21,6 @@ var toNamespace string
 var showYamlOfClone bool
 var overrideConfigMapsAndSecrets bool
 var pitr string
-
-var rePitr = regexp.MustCompile("^(?P<Year>[0-9]{4})-(?P<Month>[0-9]{2})-(?P<Day>[0-9]{2}) (?P<Hour>[0-9]{2}):(?P<Minute>[0-9]{2}):(?P<Second>[0-9]{2})[+-](?P<TimeZone>[0-9]{2})")
 
 // newBackupCommand returns the backup command of the PGO plugin.
 // It optionally takes a `repoName` and `options` flag, which it uses
@@ -61,9 +42,10 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 #### RBAC Requirements
     Resources                                           Verbs
     ---------                                           -----
-    postgresclusters.postgres-operator.crunchydata.com  [get create]
-    namespace                                           [get create]
     configmap                                           [get create delete]
+    namespace                                           [get create]
+    pod                                                 [exec]
+    postgresclusters.postgres-operator.crunchydata.com  [get create]
     secrets                                             [get create delete]
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -72,11 +54,14 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 				return fmt.Errorf("the repoName option must be specified and the allowed values are repo[1-4]. Other values are rejected")
 			}
 
-			if pitr != "" && !isSyntacticallyValidPitr(pitr) {
+			if pitr != "" && !processing.IsPitrSyntacticallyValid(pitr) {
 				return fmt.Errorf("the expected format for the PITR is '2022-12-28 15:47:38+01'. You supplied %q", pitr)
 			}
 
-			clientK8s := configureK8sClient(config.ConfigFlags)
+			clientK8s, restConfig, err := processing.ConfigureK8sClient(config.ConfigFlags)
+			if err != nil {
+				return err
+			}
 
 			clusterName := args[0]
 			_, clientCrunchy, err := v1beta1.NewPostgresClusterClient(config)
@@ -90,23 +75,23 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 			}
 
 			if pitr != "" {
-				restConfig, err := config.ToRESTConfig()
+				err = processing.IsValidPitr(restConfig, namespace, clusterToClone, fromRepo, pitr)
 				if err != nil {
-					return err
-				}
-
-				err = isValidPitr(restConfig, namespace, clusterToClone, fromRepo, pitr)
-				if err != nil {
-					return fmt.Errorf("PITR is not valid : %s", err.Error())
+					return errors.Wrap(err, "PITR is not valid")
 				}
 			}
 
-			clone, err := generateCloneWithLocalStorageFrom(clusterToClone, fromRepo, toNamespace)
+			targetNamespace := namespace
+			if toNamespace != "" {
+				targetNamespace = toNamespace
+			}
+
+			clone, err := processing.GenerateCloneDefinitionWithLocalStorageFrom(clusterToClone, fromRepo, targetNamespace)
 			if err != nil {
 				return errors.Wrap(err, "failed to generate definition of clone")
 			}
-			// if changing of namespace, we need to dump potential configurations
 
+			// this might be requested by the user to check the clone's YAML definition
 			if showYamlOfClone {
 				content, err := yaml.Marshal(clone)
 				if err != nil {
@@ -115,79 +100,35 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 				fmt.Printf("YAML of clone:\n%s\n", string(content))
 			}
 
-			var configMapsToDump, secretsToDump []string
-			// in case of failure, we have to know the created resources that we
-			// have to delete
+			// we have to know which resources we have created, so we can delete
+			// them in case of failure
 			var configMapsToDelete, secretsToDelete []string
-			if toNamespace != "" && toNamespace != clusterToClone.GetNamespace() {
-				err = createNamespaceIfNotExists(clientK8s, toNamespace)
+			if targetNamespace != clusterToClone.GetNamespace() {
+				err = processing.CreateNamespaceIfNotExists(clientK8s, targetNamespace)
 				if err != nil {
 					return errors.Wrapf(err, "failed to create namespace %q", namespace)
 				}
-				// find out if there are configmaps or secrets to be dumped
-				configMapsToDump, secretsToDump = requiredConfigMapsAndSecretsFor(clusterToClone)
-				for _, cm := range configMapsToDump {
-					err = dumpConfigMapToNamespace(clientK8s, cm, clusterToClone.GetNamespace(), toNamespace, overrideConfigMapsAndSecrets)
-					if err == nil {
-						reportSuccess(fmt.Sprintf("Dump configmap %q to %q", cm, toNamespace))
-						configMapsToDelete = append(configMapsToDelete, cm)
-					} else {
-						reportFailure(fmt.Sprintf("Dump configmap %q to %q", cm, toNamespace), err)
-						fmt.Printf("Deleting resources previously created.")
-						// try to delete them and return an error
-						deleteConfigMaps(clientK8s, configMapsToDelete, toNamespace)
-						return fmt.Errorf(fmt.Sprintf("dump of %q failed. The clone of %q cannot be created in namespace %q", cm, clusterName, toNamespace))
-					}
-				}
-				for _, secret := range secretsToDump {
-					err = dumpSecretToNamespace(clientK8s, secret, clusterToClone.GetNamespace(), toNamespace, overrideConfigMapsAndSecrets)
-					if err == nil {
-						reportSuccess(fmt.Sprintf("Dump secret %q to %q", secret, toNamespace))
-						secretsToDelete = append(secretsToDelete, secret)
-					} else {
-						reportFailure(fmt.Sprintf("Dump secret %q to %q", secret, toNamespace), err)
-						fmt.Printf("Deleting resources previously created.")
-						// try to delete previously created cm and secrets and return an error
-						deleteConfigMaps(clientK8s, configMapsToDelete, toNamespace)
-						deleteSecrets(clientK8s, secretsToDelete, toNamespace)
-						return fmt.Errorf(fmt.Sprintf("dump of %q failed. The clone of %q cannot be created in namespace %q", secret, clusterName, toNamespace))
-					}
+				// keep track of resources created. The function might need to
+				// delete them if the creation of the clone fails
+				configMapsToDelete, secretsToDelete, err = processing.DumpConfigMapsAndSecretsIfNeeded(clientK8s, clusterToClone, targetNamespace, overrideConfigMapsAndSecrets)
+				if err != nil {
+					return errors.Wrap(err, "failed to dump objects before clone creation")
 				}
 			}
-			if toNamespace != "" {
-				_, err = clientCrunchy.Namespace(toNamespace).Create(context.TODO(), clone, metav1.CreateOptions{})
-			} else {
-				_, err = clientCrunchy.Namespace(namespace).Create(context.TODO(), clone, metav1.CreateOptions{})
-			}
+
+			// Create the clone
+			_, err = clientCrunchy.Namespace(targetNamespace).Create(context.TODO(), clone, metav1.CreateOptions{})
 			if err != nil {
-				reportFailure(fmt.Sprintf("creation of clone failed"), err)
-				// first delete objects created previously
-				if toNamespace != "" && toNamespace != clusterToClone.GetNamespace() {
-					// find out if there are configmaps or secrets to be dumped
-					for _, cm := range configMapsToDump {
-						err = clientK8s.CoreV1().ConfigMaps(toNamespace).Delete(context.TODO(), cm, metav1.DeleteOptions{})
-						switch {
-						case err != nil:
-							reportFailure(fmt.Sprintf("Deletion of configmap %q", cm), err)
-						default:
-							reportSuccess(fmt.Sprintf("Deletion of configmap %q", cm))
-						}
-					}
-					for _, secret := range secretsToDump {
-						err = clientK8s.CoreV1().Secrets(toNamespace).Delete(context.TODO(), secret, metav1.DeleteOptions{})
-						switch {
-						case err != nil:
-							reportFailure(fmt.Sprintf("Deletion of secret %q", secret), err)
-						default:
-							reportSuccess(fmt.Sprintf("Deletion of secret %q", secret))
-						}
-					}
+				if targetNamespace != clusterToClone.GetNamespace() {
+					// leave the space clean : delete objects created previously
+					display.ReportFailure(fmt.Sprintf("creation of clone failed. Since target namespace is different from source namespace, deletion of dumped resources to leave the space clean"), err)
+					processing.DeleteConfigMaps(clientK8s, configMapsToDelete, targetNamespace)
+					processing.DeleteSecrets(clientK8s, secretsToDelete, targetNamespace)
 				}
 
-				return errors.Wrapf(err, "failed to create clone cluster")
+				return errors.Wrapf(err, "failed to clone cluster %s/%s", clusterToClone.GetNamespace(), clusterToClone.GetName())
 			}
-			reportSuccess(fmt.Sprintf("Clone of cluster %q successfully created as %q", clusterName, clone.GetName()))
-			fmt.Println("")
+			display.ReportSuccess(fmt.Sprintf("Clone of cluster %q successfully created as %q", clusterName, clone.GetName()))
 
 			return nil
 		},
@@ -200,415 +141,4 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 	cmd.Flags().StringVarP(&pitr, "pitr", "", "", "the point in time at which you want the clone to be restored to. Format is '2022-12-28 15:47:38+01'")
 
 	return cmd
-}
-
-// Here are the constraints on the PITR:
-// must match : YYYY-MM-DD HH:MM:SS+/-TZ
-// TZ must be less or equal than 12
-// Month must be less than 12 and larger than 0
-// hour must be less than 23 and positive or null
-// minute must be less than 60 and positive or null
-// seconds must be less than 60 and positive or null
-// must not be in the future
-// This function does not check if the time is before any backup. This is checked
-// in the code after retrieving the cluster and check its backups.
-func isSyntacticallyValidPitr(userPitr string) bool {
-	if !rePitr.MatchString(userPitr) {
-		return false
-	}
-	matches := rePitr.FindStringSubmatch(userPitr)
-	result := make(map[string]string)
-	for i, name := range rePitr.SubexpNames() {
-		if i != 0 && name != "" {
-			result[name] = matches[i]
-		}
-	}
-	month, _ := strconv.Atoi(result["Month"])
-	day, _ := strconv.Atoi(result["Day"])
-	hour, _ := strconv.Atoi(result["Hour"])
-	minute, _ := strconv.Atoi(result["Minute"])
-	second, _ := strconv.Atoi(result["Second"])
-	timezone, _ := strconv.Atoi(result["TimeZone"])
-	switch {
-	case month <= 0 || month > 12:
-		return false
-	case day <= 0 || day > 31:
-		return false
-	case hour < 0 || hour > 23:
-		return false
-	case minute < 0 || minute > 59:
-		return false
-	case second < 0 || second > 59:
-		return false
-	case timezone < 0 || timezone > 12:
-		return false
-	}
-	return true
-}
-
-func isValidPitr(restConfig *rest.Config, namespace string, sourceCluster *unstructured.Unstructured, repoName, pitr string) error {
-	stdoutAsJson, stderr, err := getExistingBackups(restConfig, namespace, sourceCluster.GetName(), repoName, "json")
-	if err != nil {
-		return errors.Wrapf(err, "failed to get backupInfos for cluster %s/%s on repo %q", namespace, sourceCluster.GetName(), repoName)
-	}
-	if stderr != "" {
-		return fmt.Errorf("failed to get backupInfos for cluster %s/%s on repo %q due to %s", namespace, sourceCluster.GetName(), repoName, stderr)
-	}
-
-	var backupInfos data.BackupInfo
-	err = json.Unmarshal([]byte(stdoutAsJson), &backupInfos)
-	if err != nil {
-		return errors.Wrap(err, "failed to unmarshal backup lists")
-	}
-	// Compute the PITR as a date
-
-	timeRequestedInUTC, err := computeTimeRequestedInUTC(pitr)
-
-	if timestampIsAfterOneOfThoseBackup(timeRequestedInUTC, backupInfos) {
-		return nil
-	}
-	return fmt.Errorf("the requested PITR is before any full backup for this cluster. Cannot restore before oldest full backup")
-}
-
-func computeTimeRequestedInUTC(pitr string) (time.Time, error) {
-	submatches := rePitr.FindStringSubmatch(pitr)
-	var year, month, day, hours, minutes, seconds, timezone string
-	for i, name := range rePitr.SubexpNames() {
-		switch {
-		case i == 0:
-			continue
-		case name == "Year":
-			year = submatches[i]
-		case name == "Month":
-			month = submatches[i]
-		case name == "Day":
-			day = submatches[i]
-		case name == "Hour":
-			hours = submatches[i]
-		case name == "Minute":
-			minutes = submatches[i]
-		case name == "Second":
-			seconds = submatches[i]
-		case name == "TimeZone":
-			timezone = submatches[i]
-		}
-	}
-	timezoneAsInt, err := strconv.Atoi(timezone)
-	if err != nil {
-		return time.Now(), errors.Wrapf(err, "failed to convert timezone %s as an integer", timezone)
-	}
-
-	pitrWithoutTZ := fmt.Sprintf("%s-%s-%s %s:%s:%s", year, month, day, hours, minutes, seconds)
-	timeRequested, err := time.Parse("2006-01-02 15:04:05", pitrWithoutTZ)
-	multiplier := +1 // if we have a positive timezone, have to shift in negative
-	if strings.Index(pitr, "+") != -1 {
-		multiplier = -1
-	}
-	// applying timezone to compute time in UTC. Times are supplied in UTC in
-	// timestamps of backups
-	timeRequested = timeRequested.Add(time.Duration(multiplier*timezoneAsInt) * time.Hour)
-	if err != nil {
-		return time.Now(), errors.Wrap(err, "failed to parse pitr date")
-	}
-	return timeRequested, nil
-}
-
-func timestampIsAfterOneOfThoseBackup(timeRequested time.Time, backupInfos data.BackupInfo) bool {
-	for _, backup := range backupInfos.Backups {
-		if backup.Type != data.Full {
-			continue
-		}
-		// we are able to restore after a full backup using the full + WALs (or
-		// using Full + diff + WALs or Full + incr + WALs)
-		startTime := time.Unix(0, convertBackupTimestampToNanoSeconds(backup.StopStartTime.Start))
-		if timeRequested.After(startTime) {
-			return true
-		}
-	}
-	return false
-}
-
-func convertBackupTimestampToNanoSeconds(t int64) int64 {
-	return int64(int64(math.Pow(10, 9)) * t)
-}
-
-func generateCloneWithLocalStorageFrom(sourceCluster *unstructured.Unstructured, repoDataSource string, targetNamespace string) (*unstructured.Unstructured, error) {
-	clone := unstructured.Unstructured{}
-	clone.SetAPIVersion(sourceCluster.GetAPIVersion())
-	clone.SetKind(sourceCluster.GetKind())
-	clone.SetAnnotations(filterHelmManagement(sourceCluster.GetAnnotations()))
-	clone.SetLabels(filterHelmManagement(sourceCluster.GetLabels()))
-	clone.SetName(fmt.Sprintf("clone-%s", sourceCluster.GetName()))
-	spec := make(map[string]interface{})
-	switch {
-	case targetNamespace == "":
-		clone.SetNamespace(sourceCluster.GetNamespace())
-		spec["dataSource"] = generateDataSourceSection(sourceCluster.GetName(), repoDataSource, "")
-	default:
-		clone.SetNamespace(targetNamespace)
-		spec["dataSource"] = generateDataSourceSection(sourceCluster.GetName(), repoDataSource, sourceCluster.GetNamespace())
-	}
-
-	if repoDataSource != "" {
-		if !repoIsValidForCluster(repoDataSource, sourceCluster) {
-			return nil, fmt.Errorf("%q is not a valid repo for cluster %q", repoDataSource, sourceCluster)
-		}
-	}
-
-	specSourceCluster := sourceCluster.Object["spec"].(map[string]interface{})
-	// copy with the exact same content the following fields under spec
-	for _, key := range []string{"monitoring", "openshift", "patroni", "port", "postgresVersion", "shutdown", "users"} {
-		spec[key] = specSourceCluster[key]
-	}
-	spec["metadata"] = filterMetadata(specSourceCluster["metadata"].(map[string]interface{}))
-	spec["backups"] = cloneBackupParametersButConfigureLocalStorage(specSourceCluster["backups"].(map[string]interface{}))
-	spec["instances"] = cloneInstanceParametersWithoutAntiAffinity(specSourceCluster["instances"].([]interface{}))
-	clone.Object["spec"] = spec
-	return &clone, nil
-}
-
-func filterMetadata(metadata map[string]interface{}) interface{} {
-	filtered := make(map[string]interface{})
-	labels := metadata["labels"].(map[string]interface{})
-	filteredLabels := make(map[string]interface{})
-	for k, v := range labels {
-		if k == "app.kubernetes.io/managed-by" || k == "helm.sh/chart" {
-			continue
-		}
-		filteredLabels[k] = v
-	}
-	filtered["labels"] = filteredLabels
-
-	annotations := metadata["annotations"].(map[string]interface{})
-	filteredAnnotations := make(map[string]interface{})
-	for k, v := range annotations {
-		if k == "restarted" {
-			continue
-		}
-		filteredAnnotations[k] = v
-	}
-	filtered["annotations"] = filteredAnnotations
-
-	return filtered
-}
-
-func repoIsValidForCluster(repoDataSource string, sourceCluster *unstructured.Unstructured) bool {
-	spec := sourceCluster.Object["spec"].(map[string]interface{})
-	backups := spec["backups"].(map[string]interface{})
-	pgbackrestConf := backups["pgbackrest"].(map[string]interface{})
-	repos := pgbackrestConf["repos"].([]interface{})
-	for _, repo := range repos {
-		r := repo.(map[string]interface{})
-		if r["name"] == repoDataSource {
-			return true
-		}
-	}
-	return false
-}
-
-func generateDataSourceSection(sourceClusterName, repoDataSource, sourceNamespace string) map[string]interface{} {
-	dataSourceSection := make(map[string]interface{})
-	postgresCluster := make(map[string]interface{})
-	postgresCluster["clusterName"] = sourceClusterName
-	postgresCluster["repoName"] = repoDataSource
-	if sourceNamespace != "" {
-		postgresCluster["clusterNamespace"] = sourceNamespace
-	}
-	dataSourceSection["postgresCluster"] = postgresCluster
-	return dataSourceSection
-}
-
-// the main goal is to filter the helm annotations. We don't want our clone
-// object to be handled by helm.
-func filterHelmManagement(values map[string]string) map[string]string {
-	filteredValues := make(map[string]string)
-	for k, v := range values {
-		if k == "app.kubernetes.io/managed-by" && v == "Helm" {
-			continue
-		}
-		filteredValues[k] = v
-	}
-	return filteredValues
-}
-
-func cloneBackupParametersButConfigureLocalStorage(sourceBackupConf map[string]interface{}) map[string]interface{} {
-	backupConf := make(map[string]interface{})
-	pgbackrestConf := make(map[string]interface{})
-	sourcePgBackrestConf := sourceBackupConf["pgbackrest"].(map[string]interface{})
-	for _, key := range []string{"configuration", "global", "jobs", "manual", "metadata", "repoHost", "sidecars"} {
-		pgbackrestConf[key] = sourcePgBackrestConf[key]
-	}
-	var repos []map[string]interface{}
-	sourceRepos := sourcePgBackrestConf["repos"].([]interface{})
-	schedules := make(map[string]interface{})
-	// for a first version, considering that the repo1 is local and othes are
-	// remote and do not require volume specification.
-	for _, repo := range sourceRepos {
-		m := repo.(map[string]interface{})
-		// if the source is using repo1, use it as it is
-		// we won't use here something different
-		if m["name"] == "repo1" {
-			repos = append(repos, m)
-			break
-		}
-		// there are no repo1: keeping backup schedule of the configured repo
-		schedules = m["schedules"].(map[string]interface{})
-	}
-	if len(repos) == 0 {
-		// none was found. Adding
-		repo := make(map[string]interface{})
-		repo["name"] = "repo1"
-		repo["schedules"] = schedules
-		repos = append(repos, repo)
-	}
-	pgbackrestConf["repos"] = repos
-	backupConf["pgbackrest"] = pgbackrestConf
-	return backupConf
-}
-
-func cloneInstanceParametersWithoutAntiAffinity(sourceInstances []interface{}) []map[string]interface{} {
-	var instancesList []map[string]interface{}
-	for _, sourceInstance := range sourceInstances {
-		si := sourceInstance.(map[string]interface{})
-		instance := make(map[string]interface{})
-		for _, k := range []string{"dataVolumeClaimSpec", "name", "replicas", "resources", "sidecars"} {
-			instance[k] = si[k]
-		}
-		instancesList = append(instancesList, instance)
-	}
-	return instancesList
-}
-
-func requiredConfigMapsAndSecretsFor(pgCluster *unstructured.Unstructured) ([]string, []string) {
-	var cmList, secretsList []string
-	spec := pgCluster.Object["spec"].(map[string]interface{})
-	backups := spec["backups"].(map[string]interface{})
-	pgbackrest := backups["pgbackrest"].(map[string]interface{})
-	configurations := pgbackrest["configuration"].([]interface{})
-	for _, conf := range configurations {
-		c := conf.(map[string]interface{})
-		switch {
-		case c["configMap"] != nil:
-			cm := c["configMap"].(map[string]interface{})
-			cmList = append(cmList, cm["name"].(string))
-		case c["secret"] != nil:
-			secret := c["secret"].(map[string]interface{})
-			secretsList = append(secretsList, secret["name"].(string))
-		}
-	}
-	return cmList, secretsList
-}
-
-func configureK8sClient(flags *genericclioptions.ConfigFlags) *kubernetes.Clientset {
-	restConfig, err := flags.ToRESTConfig()
-	if err != nil {
-		fmt.Printf("Failed to configure access to k8s: %+v\n", err)
-		os.Exit(1)
-	}
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		fmt.Printf("Failed to build a K8S client: %+v\n", err)
-		os.Exit(1)
-	}
-	return client
-}
-
-func reportSuccess(msg string) {
-	dotsCount := 80 - len(msg)
-	if dotsCount < 0 {
-		dotsCount = 5
-	}
-	fmt.Printf("%s %s [%s]\n", msg, strings.Repeat(".", dotsCount), formatterOk.Sprintf("OK"))
-}
-
-func reportFailure(msg string, err error) {
-	dotsCount := 80 - len(msg)
-	if dotsCount < 0 {
-		dotsCount = 5
-	}
-	fmt.Printf("%s %s [%s]\n", msg, strings.Repeat(".", dotsCount), formatterNok.Sprintf("%s", err.Error()))
-}
-
-func dumpConfigMapToNamespace(clientK8s *kubernetes.Clientset, cmName, fromNamespace, toNamespace string, overrideIfExists bool) error {
-	cm, err := clientK8s.CoreV1().ConfigMaps(fromNamespace).Get(context.TODO(), cmName, metav1.GetOptions{})
-	if err != nil {
-		return errors.Wrapf(err, "failed to retrieve configmap %q from namespace %q", cmName, fromNamespace)
-	}
-	dumpCm := corev1.ConfigMap{}
-	dumpCm.SetName(cmName)
-	dumpCm.SetNamespace(toNamespace)
-	dumpCm.Annotations = filterHelmManagement(cm.Annotations)
-	dumpCm.Labels = filterHelmManagement(cm.Labels)
-	dumpCm.Data = cm.Data
-	_, err = clientK8s.CoreV1().ConfigMaps(toNamespace).Create(context.TODO(), &dumpCm, metav1.CreateOptions{})
-	switch {
-	case err == nil:
-		return nil
-	case strings.Index(err.Error(), "already exists") != -1 && overrideIfExists:
-		_, err = clientK8s.CoreV1().ConfigMaps(toNamespace).Update(context.TODO(), &dumpCm, metav1.UpdateOptions{})
-		return err
-	default:
-		return errors.Wrapf(err, "failed to create dump configmap %q from ns %q to ns %q", cmName, fromNamespace, toNamespace)
-	}
-}
-
-func dumpSecretToNamespace(clientK8s *kubernetes.Clientset, secretName, fromNamespace, toNamespace string, overrideIfExists bool) error {
-	secret, err := clientK8s.CoreV1().Secrets(fromNamespace).Get(context.TODO(), secretName, metav1.GetOptions{})
-	if err != nil {
-		return errors.Wrapf(err, "failed to retrieve secret %q from namespace %q", secretName, fromNamespace)
-	}
-	dump := corev1.Secret{}
-	dump.SetName(secretName)
-	dump.SetNamespace(toNamespace)
-	dump.Annotations = filterHelmManagement(secret.Annotations)
-	dump.Labels = filterHelmManagement(secret.Labels)
-	dump.Data = secret.Data
-	_, err = clientK8s.CoreV1().Secrets(toNamespace).Create(context.TODO(), &dump, metav1.CreateOptions{})
-	switch {
-	case err == nil:
-		return nil
-	case strings.Index(err.Error(), "already exists") != -1 && overrideIfExists:
-		_, err = clientK8s.CoreV1().Secrets(toNamespace).Update(context.TODO(), &dump, metav1.UpdateOptions{})
-		return err
-	default:
-		return errors.Wrapf(err, "failed to create dump secret %q from ns %q to ns %q", secretName, fromNamespace, toNamespace)
-	}
-}
-
-// best effort to delete resources
-func deleteConfigMaps(clientK8s *kubernetes.Clientset, configMapsToDelete []string, namespace string) {
-	for _, cm := range configMapsToDelete {
-		err := clientK8s.CoreV1().ConfigMaps(namespace).Delete(context.TODO(), cm, metav1.DeleteOptions{})
-		if err != nil {
-			reportFailure(fmt.Sprintf("Deletion of cm %q in ns %q", cm, namespace), err)
-		} else {
-			reportSuccess(fmt.Sprintf("Deletion of cm %q in ns %q", cm, namespace))
-		}
-	}
-}
-
-// best effort to delete resources
-func deleteSecrets(clientK8s *kubernetes.Clientset, secretsToDelete []string, namespace string) {
-	for _, secret := range secretsToDelete {
-		err := clientK8s.CoreV1().Secrets(namespace).Delete(context.TODO(), secret, metav1.DeleteOptions{})
-		if err != nil {
-			reportFailure(fmt.Sprintf("Deletion of secret %q in ns %q", secret, namespace), err)
-		} else {
-			reportSuccess(fmt.Sprintf("Deletion of secret %q in ns %q", secret, namespace))
-		}
-	}
-}
-
-func createNamespaceIfNotExists(clientK8s *kubernetes.Clientset, namespace string) error {
-	_, err := clientK8s.CoreV1().Namespaces().Get(context.TODO(), namespace, metav1.GetOptions{})
-	if err != nil && strings.Index(err.Error(), "not found") != -1 {
-		fmt.Printf("Namespace %q does not exist. Creating it.\n", namespace)
-		ns := corev1.Namespace{}
-		ns.Name = namespace
-		_, err := clientK8s.CoreV1().Namespaces().Create(context.TODO(), &ns, metav1.CreateOptions{})
-		if err != nil {
-			return errors.Wrapf(err, "failed to create namespace %q", namespace)
-		}
-	}
-	return nil
 }

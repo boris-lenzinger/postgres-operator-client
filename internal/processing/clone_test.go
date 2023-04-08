@@ -1,4 +1,4 @@
-package cmd
+package processing
 
 import (
 	"encoding/json"
@@ -97,13 +97,13 @@ func Test_computeTimeRequestedInUTC(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := computeTimeRequestedInUTC(tt.args.pitr)
+			got, err := computeTimeRequestedInUTCForPitr(tt.args.pitr)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("computeTimeRequestedInUTC() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("computeTimeRequestedInUTCForPitr() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("computeTimeRequestedInUTC() got = %v, want %v", got, tt.want)
+				t.Errorf("computeTimeRequestedInUTCForPitr() got = %v, want %v", got, tt.want)
 			}
 		})
 	}

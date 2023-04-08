@@ -20,6 +20,7 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
+	"github.com/crunchydata/postgres-operator-client/internal/processing"
 	"io"
 	"os"
 	"strings"
@@ -815,7 +816,7 @@ func gatherPostgresqlLogs(ctx context.Context,
 			stdin, stdout, stderr, command...)
 	}
 
-	stdout, stderr, err := Executor(exec).listPGLogFiles(numLogs)
+	stdout, stderr, err := processing.Executor(exec).ListPGLogFiles(numLogs)
 	if err != nil {
 		if apierrors.IsForbidden(err) {
 			writeInfo(cmd, err.Error())
@@ -831,7 +832,7 @@ func gatherPostgresqlLogs(ctx context.Context,
 	for _, logFile := range logFiles {
 		var buf bytes.Buffer
 
-		stdout, stderr, err := Executor(exec).catFile(logFile)
+		stdout, stderr, err := processing.Executor(exec).CatFile(logFile)
 		if err != nil {
 			if apierrors.IsForbidden(err) {
 				writeInfo(cmd, err.Error())
@@ -960,7 +961,7 @@ func gatherPatroniInfo(ctx context.Context,
 	var buf bytes.Buffer
 
 	buf.Write([]byte("patronictl list\n"))
-	stdout, stderr, err := Executor(exec).patronictl("list")
+	stdout, stderr, err := processing.Executor(exec).Patronictl("list")
 	if err != nil {
 		if apierrors.IsForbidden(err) {
 			writeInfo(cmd, err.Error())
@@ -975,7 +976,7 @@ func gatherPatroniInfo(ctx context.Context,
 	}
 
 	buf.Write([]byte("patronictl history\n"))
-	stdout, stderr, err = Executor(exec).patronictl("history")
+	stdout, stderr, err = processing.Executor(exec).Patronictl("history")
 	if err != nil {
 		if apierrors.IsForbidden(err) {
 			writeInfo(cmd, err.Error())
@@ -1044,7 +1045,7 @@ func gatherProcessInfo(ctx context.Context,
 					stdin, stdout, stderr, command...)
 			}
 
-			stdout, stderr, err := Executor(exec).processes()
+			stdout, stderr, err := processing.Executor(exec).Processes()
 			if err != nil {
 				// If we get an RBAC error, let the user know. Otherwise, just
 				// try the next container.

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cmd
+package processing
 
 import (
 	"bytes"
@@ -25,8 +25,8 @@ type Executor func(
 	stdin io.Reader, stdout, stderr io.Writer, command ...string,
 ) error
 
-// pgBackRestInfo defines a pgBackRest info command with relevant flags set
-func (exec Executor) pgBackRestInfo(output, repoNum string) (string, string, error) {
+// PgBackRestInfo defines a pgBackRest info command with relevant flags set
+func (exec Executor) PgBackRestInfo(output, repoNum string) (string, string, error) {
 	var stdout, stderr bytes.Buffer
 	var command string
 
@@ -39,8 +39,8 @@ func (exec Executor) pgBackRestInfo(output, repoNum string) (string, string, err
 	return stdout.String(), stderr.String(), err
 }
 
-// postgresqlListLogFiles returns the full path of numLogs log files.
-func (exec Executor) listPGLogFiles(numLogs int) (string, string, error) {
+// ListPGLogFiles returns the full path of numLogs log files.
+func (exec Executor) ListPGLogFiles(numLogs int) (string, string, error) {
 	var stdout, stderr bytes.Buffer
 
 	command := fmt.Sprintf("ls -1dt pgdata/pg[0-9][0-9]/log/* | head -%d", numLogs)
@@ -49,9 +49,9 @@ func (exec Executor) listPGLogFiles(numLogs int) (string, string, error) {
 	return stdout.String(), stderr.String(), err
 }
 
-// catFile takes the full path of a file and returns the contents
+// CatFile takes the full path of a file and returns the contents
 // of that file
-func (exec Executor) catFile(filePath string) (string, string, error) {
+func (exec Executor) CatFile(filePath string) (string, string, error) {
 	var stdout, stderr bytes.Buffer
 
 	command := fmt.Sprintf("cat %s", filePath)
@@ -60,18 +60,18 @@ func (exec Executor) catFile(filePath string) (string, string, error) {
 	return stdout.String(), stderr.String(), err
 }
 
-// patronictl takes a patronictl subcommand and returns the output of that command
-func (exec Executor) patronictl(cmd string) (string, string, error) {
+// Patronictl takes a Patronictl subcommand and returns the output of that command
+func (exec Executor) Patronictl(cmd string) (string, string, error) {
 	var stdout, stderr bytes.Buffer
 
-	command := "patronictl " + cmd
+	command := "Patronictl " + cmd
 	err := exec(nil, &stdout, &stderr, "bash", "-ceu", "--", command)
 
 	return stdout.String(), stderr.String(), err
 }
 
-// processes returns the output of a ps command
-func (exec Executor) processes() (string, string, error) {
+// Processes returns the output of a ps command
+func (exec Executor) Processes() (string, string, error) {
 	var stdout, stderr bytes.Buffer
 
 	command := "ps aux --width 500"
