@@ -99,7 +99,7 @@ pgo show backup hippo --repoName=repo1
 			return err
 		}
 
-		stdout, stderr, err := processing.GetExistingBackups(restConfig, args[0], configNamespace, repoName, output)
+		stdout, stderr, err := processing.GetExistingBackups(restConfig, configNamespace, args[0], repoName, output)
 		if err != nil {
 			return err
 		}
