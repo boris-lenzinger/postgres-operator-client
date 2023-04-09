@@ -36,7 +36,9 @@ func GenerateCloneDefinitionWithLocalStorageFrom(sourceCluster *unstructured.Uns
 	for _, key := range []string{"monitoring", "openshift", "patroni", "port", "postgresVersion", "shutdown", "users"} {
 		spec[key] = specSourceCluster[key]
 	}
-	spec["metadata"] = filterMetadata(specSourceCluster["metadata"].(map[string]interface{}))
+	if specSourceCluster["metadata"] != nil {
+		spec["metadata"] = filterMetadata(specSourceCluster["metadata"].(map[string]interface{}))
+	}
 	spec["backups"] = cloneBackupParametersButConfigureLocalStorage(specSourceCluster["backups"].(map[string]interface{}))
 	spec["instances"] = cloneInstanceParametersWithoutAntiAffinity(specSourceCluster["instances"].([]interface{}))
 	clone.Object["spec"] = spec
@@ -79,7 +81,9 @@ func cloneBackupParametersButConfigureLocalStorage(sourceBackupConf map[string]i
 			break
 		}
 		// there are no repo1: keeping backup schedule of the configured repo
-		schedules = m["schedules"].(map[string]interface{})
+		if m["schedules"] != nil {
+			schedules = m["schedules"].(map[string]interface{})
+		}
 	}
 	if len(repos) == 0 {
 		// none was found. Adding
@@ -111,8 +115,14 @@ func computeRequiredConfigMapsAndSecretsFor(pgCluster *unstructured.Unstructured
 	var cmList, secretsList []string
 	spec := pgCluster.Object["spec"].(map[string]interface{})
 	backups := spec["backups"].(map[string]interface{})
-	pgbackrest := backups["pgbackrest"].(map[string]interface{})
-	configurations := pgbackrest["configuration"].([]interface{})
+	var pgbackrest map[string]interface{}
+	if backups["pgbackrest"] != nil {
+		pgbackrest = backups["pgbackrest"].(map[string]interface{})
+	}
+	var configurations []interface{}
+	if pgbackrest["configuration"] != nil {
+		configurations = pgbackrest["configuration"].([]interface{})
+	}
 	for _, conf := range configurations {
 		c := conf.(map[string]interface{})
 		switch {
@@ -130,7 +140,10 @@ func computeRequiredConfigMapsAndSecretsFor(pgCluster *unstructured.Unstructured
 func repoExistsForCluster(repoDataSource string, sourceCluster *unstructured.Unstructured) bool {
 	spec := sourceCluster.Object["spec"].(map[string]interface{})
 	backups := spec["backups"].(map[string]interface{})
-	pgbackrestConf := backups["pgbackrest"].(map[string]interface{})
+	var pgbackrestConf map[string]interface{}
+	if backups["pgbackrest"] != nil {
+		pgbackrestConf = backups["pgbackrest"].(map[string]interface{})
+	}
 	repos := pgbackrestConf["repos"].([]interface{})
 	for _, repo := range repos {
 		r := repo.(map[string]interface{})
