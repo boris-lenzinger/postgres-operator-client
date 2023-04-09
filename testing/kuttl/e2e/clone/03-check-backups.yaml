@@ -1,0 +1,12 @@
+---
+# Due to KUTTL's trouble comparing slices I found it easier to check through a script.
+# - https://github.com/kudobuilder/kuttl/issues/76
+apiVersion: kuttl.dev/v1beta1
+kind: TestStep
+commands:
+- script: |
+    kubectl-pgo show backup source-cluster -n ${NAMESPACE}
+- command: ./get-backup.sh source-cluster ${NAMESPACE} 1
+- command: ./get-backup.sh source-cluster ${NAMESPACE} 2
+- command: ./get-backup.sh source-cluster ${NAMESPACE} 3
+...

@@ -1,0 +1,12 @@
+---
+apiVersion: kuttl.dev/v1beta1
+kind: TestStep
+commands:
+  - script: |
+      lines=$(./get-count.sh clone-source-cluster ${NAMESPACE} source-cluster)
+      if [[ $lines != 200 ]]; then
+        echo "Expected 200 lines in the clone but got ${lines}"
+        exit 1
+      fi
+      exit 0
+...
