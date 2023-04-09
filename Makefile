@@ -70,9 +70,5 @@ cli-docs: ## generate cli documenation
 	rm docs/content/reference/pgo.md
 
 .PHONY: check-cli-docs
-check-cli-docs: cli-docs 
+check-cli-docs: cli-docs
 	git diff --exit-code -- docs/content/reference/
-
-.PHONY: ut
-ut:
-	go test -count=1 ./...
