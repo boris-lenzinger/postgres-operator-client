@@ -1,0 +1,28 @@
+---
+apiVersion: kuttl.dev/v1beta1
+kind: TestStep
+commands:
+- command: ./inject-data.sh source-cluster ${NAMESPACE}
+- script: |
+    RESULT=$(kubectl-pgo --namespace "${NAMESPACE}" backup source-cluster --repoName repo1 --options="--type=full")
+    echo "RESULT from taking backup: ${RESULT}"
+    if [[ -z "$RESULT" || "$RESULT" != "postgresclusters/source-cluster backup initiated" ]]; then
+        exit 1
+    fi
+
+    # Wait for the success of the backup
+    exit 0
+- command: kubectl-pgo show backup source-cluster -n ${NAMESPACE}
+- command: ./inject-data.sh source-cluster ${NAMESPACE}
+- script: |
+    RESULT=$(kubectl-pgo --namespace "${NAMESPACE}" backup source-cluster --repoName repo1 --options="--type=full")
+    echo "RESULT from taking backup: ${RESULT}"
+    if [[ -z "$RESULT" || "$RESULT" != "postgresclusters/source-cluster backup initiated" ]]; then
+        exit 1
+    fi
+
+    # Wait for the success of the backup
+    exit 0
+- command: kubectl-pgo show backup source-cluster -n ${NAMESPACE}
+- command: kubectl get postgrescluster source-cluster -n ${NAMESPACE} -o yaml
+...
