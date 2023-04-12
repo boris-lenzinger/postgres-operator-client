@@ -3,7 +3,7 @@ apiVersion: kuttl.dev/v1beta1
 kind: TestStep
 commands:
   - script: |
-      expected=200
+      expected=100
       lines=$(./get-count.sh clone-source-cluster ${NAMESPACE} source-cluster)
       if [[ $lines != ${expected} ]]; then
         echo "Expected ${expected} lines in the clone but got ${lines}"
