@@ -1,0 +1,10 @@
+---
+apiVersion: kuttl.dev/v1beta1
+kind: TestStep
+commands:
+- script: |
+    # Get the first backup (with 100 records)
+    timestamp=$(./get-backup.sh source-cluster ${NAMESPACE} 1)
+    timezone=$(./get-database-timezone.sh source-cluster ${NAMESPACE})
+    kubectl-pgo clone source-cluster -n ${NAMESPACE} --from-repo=repo1 --pitr="${timestamp}${timezone}"
+...

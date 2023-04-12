@@ -1,0 +1,9 @@
+---
+apiVersion: kuttl.dev/v1beta1
+kind: TestStep
+delete:
+# Delete a Pod
+- apiVersion: postgres-operator.crunchydata.com/v1beta1
+  kind: PostgresCluster
+  name: clone-source-cluster
+...
