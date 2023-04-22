@@ -86,7 +86,7 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 				targetNamespace = toNamespace
 			}
 
-			clone, err := processing.GenerateCloneDefinitionWithLocalStorageFrom(clusterToClone, fromRepo, targetNamespace)
+			clone, err := processing.GenerateCloneDefinitionWithLocalStorageFrom(clusterToClone, fromRepo, targetNamespace, pitr)
 			if err != nil {
 				return errors.Wrap(err, "failed to generate definition of clone")
 			}
