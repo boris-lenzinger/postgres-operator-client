@@ -11,7 +11,7 @@ import (
 //   - repoDataSource is the repo used to generate the clone
 //   - targetNamespace is where the clone must be built. If empty, indicates the same
 //     namespace as the original cluster
-func GenerateCloneDefinitionWithLocalStorageFrom(sourceCluster *unstructured.Unstructured, repoDataSource string, targetNamespace string) (*unstructured.Unstructured, error) {
+func GenerateCloneDefinitionWithLocalStorageFrom(sourceCluster *unstructured.Unstructured, repoDataSource string, targetNamespace, pitr string) (*unstructured.Unstructured, error) {
 	clone := unstructured.Unstructured{}
 	clone.SetAPIVersion(sourceCluster.GetAPIVersion())
 	clone.SetKind(sourceCluster.GetKind())
@@ -23,7 +23,7 @@ func GenerateCloneDefinitionWithLocalStorageFrom(sourceCluster *unstructured.Uns
 		targetNamespace = sourceCluster.GetNamespace()
 	}
 	clone.SetNamespace(targetNamespace)
-	spec["dataSource"] = generateDataSourceSection(sourceCluster.GetName(), repoDataSource, sourceCluster.GetNamespace())
+	spec["dataSource"] = generateDataSourceSection(sourceCluster.GetName(), repoDataSource, sourceCluster.GetNamespace(), pitr)
 
 	if repoDataSource != "" {
 		if !repoExistsForCluster(repoDataSource, sourceCluster) {
@@ -45,13 +45,22 @@ func GenerateCloneDefinitionWithLocalStorageFrom(sourceCluster *unstructured.Uns
 	return &clone, nil
 }
 
-func generateDataSourceSection(sourceClusterName, repoDataSource, sourceNamespace string) map[string]interface{} {
+func generateDataSourceSection(sourceClusterName, repoDataSource, sourceNamespace, pitr string) map[string]interface{} {
 	dataSourceSection := make(map[string]interface{})
 	postgresCluster := make(map[string]interface{})
 	postgresCluster["clusterName"] = sourceClusterName
 	postgresCluster["repoName"] = repoDataSource
 	if sourceNamespace != "" {
 		postgresCluster["clusterNamespace"] = sourceNamespace
+	}
+	if pitr != "" {
+		//options:
+		//	- --type=time
+		//	- --target="2021-06-09 14:15:11-04"
+		options := make([]string, 2)
+		options[0] = "--type=time"
+		options[1] = fmt.Sprintf("--target=\"%s\"", pitr)
+		postgresCluster["options"] = options
 	}
 	dataSourceSection["postgresCluster"] = postgresCluster
 	return dataSourceSection
