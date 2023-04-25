@@ -4,7 +4,11 @@ kind: TestStep
 commands:
 - script: |
     # Get the first backup (with 100 records)
-    timestamp=$(./get-backup.sh source-cluster ${NAMESPACE} 1)
+    echo "======================================================"      
+    kubectl-pgo show backup source-cluster -n ${NAMESPACE}
+    timestamp=$(./get-backup.sh source-cluster ${NAMESPACE} 2)
+    echo "Timestamp used : ${timestamp}"
     timezone=$(./get-database-timezone.sh source-cluster ${NAMESPACE})
-    kubectl-pgo clone source-cluster -n ${NAMESPACE} --from-repo=repo1 --pitr="${timestamp}${timezone}"
+    echo "Timezone used : ${timezone}"
+    kubectl-pgo clone source-cluster -n ${NAMESPACE} --repoName=repo1 --pitr="${timestamp}${timezone}" --show-yaml
 ...

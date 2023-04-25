@@ -9,10 +9,12 @@ commands:
     if [[ -z "$RESULT" || "$RESULT" != "postgresclusters/source-cluster backup initiated" ]]; then
         exit 1
     fi
+    sleep 30
 
     # Wait for the success of the backup
     exit 0
 - command: kubectl-pgo show backup source-cluster -n ${NAMESPACE}
+- command: echo "======================================================"
 - command: ./inject-data.sh source-cluster ${NAMESPACE}
 - script: |
     RESULT=$(kubectl-pgo --namespace "${NAMESPACE}" backup source-cluster --repoName repo1 --options="--type=full")
@@ -20,9 +22,11 @@ commands:
     if [[ -z "$RESULT" || "$RESULT" != "postgresclusters/source-cluster backup initiated" ]]; then
         exit 1
     fi
+    sleep 30
 
     # Wait for the success of the backup
     exit 0
 - command: kubectl-pgo show backup source-cluster -n ${NAMESPACE}
+- command: echo "======================================================"
 - command: kubectl get postgrescluster source-cluster -n ${NAMESPACE} -o yaml
 ...
