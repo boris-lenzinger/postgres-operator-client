@@ -48,7 +48,7 @@ check:
 
 # Expects operator to be running
 .PHONY: check-kuttl
-check-kuttl: PATH := $(PWD)/bin/kubectl-pgo:$(PATH)
+check-kuttl: PATH := $(PWD)/bin:$(PATH)
 check-kuttl:
 	${KUBE_CLIENT} ${KUTTL_TEST} \
 		--config testing/kuttl/kuttl-test.yaml
