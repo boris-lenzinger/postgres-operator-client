@@ -18,4 +18,8 @@ spec:
           volumeClaimSpec:
             accessModes: [ReadWriteOnce]
             resources: { requests: { storage: 1Gi } }
+      manual:
+        options:
+        - --type=full
+        repoName: repo1
 ...

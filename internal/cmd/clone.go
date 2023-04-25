@@ -134,7 +134,7 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 		},
 	}
 	cmd.Args = cobra.ExactArgs(1)
-	cmd.Flags().StringVar(&fromRepo, "from-repo", "", "repo name to clone from (repo1, repo2, etc)")
+	cmd.Flags().StringVar(&fromRepo, "repoName", "", "repo name to clone from (repo1, repo2, etc)")
 	cmd.Flags().StringVar(&toNamespace, "to-ns", "", "the target namespace where the clone will live")
 	cmd.Flags().BoolVarP(&showYamlOfClone, "show-yaml", "", false, "request to show the yaml generated for the definition of the clone")
 	cmd.Flags().BoolVarP(&overrideConfigMapsAndSecrets, "overrides-configs", "", false, "request to override configmaps and secrets if they already exist")
