@@ -26,7 +26,7 @@ func BuildBackups() []data.BackupInfo {
 func GetOldestStartDateOfBackups(backupInfos data.BackupInfo) time.Time {
 	backups := backupInfos.Backups
 	sort.Slice(backups, func(i, j int) bool { return backups[i].StopStartTime.Start < backups[j].StopStartTime.Start })
-	return time.Unix(0, convertBackupTimestampToNanoSeconds(backups[0].StopStartTime.Start))
+	return time.Unix(backups[0].StopStartTime.Start, 0)
 }
 
 func Test_timestampIsAfterOneOfThoseBackup(t *testing.T) {

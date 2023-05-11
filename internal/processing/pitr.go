@@ -7,7 +7,6 @@ import (
 	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/rest"
-	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -93,17 +92,13 @@ func timestampIsAfterOneOfThoseBackup(timeRequested time.Time, backupInfos data.
 			continue
 		}
 		// we are able to restore after a full backup using the full + WALs (or
-		// using Full + diff + WALs or Full + incr + WALs)
-		startTime := time.Unix(0, convertBackupTimestampToNanoSeconds(backup.StopStartTime.Start))
+		// using Full + diff + WALs or Full + Diff + incr + WALs)
+		startTime := time.Unix(backup.StopStartTime.Start, 0)
 		if timeRequested.After(startTime) {
 			return true
 		}
 	}
 	return false
-}
-
-func convertBackupTimestampToNanoSeconds(t int64) int64 {
-	return int64(int64(math.Pow(10, 9)) * t)
 }
 
 func computeTimeRequestedInUTCForPitr(pitr string) (time.Time, error) {
