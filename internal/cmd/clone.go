@@ -114,7 +114,7 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 				stopTime = stopTime.UTC()
 				// make sure to set the pitr right after the backup
 				stopTime.Add(1 * time.Second)
-				pitr = stopTime.Format("2006-01-02 15:04:05")
+				pitr = fmt.Sprintf("%s+00", stopTime.Format("2006-01-02 15:04:05"))
 			}
 
 			clone, err := processing.GenerateCloneDefinitionWithLocalStorageFrom(clusterToClone, fromRepo, targetNamespace, pitr)
