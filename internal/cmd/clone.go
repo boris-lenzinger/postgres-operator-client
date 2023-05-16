@@ -113,7 +113,7 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 				stopTime := time.Unix(backupsList[0].StopStartTime.Stop, 0)
 				stopTime = stopTime.UTC()
 				// make sure to set the pitr right after the backup
-				stopTime.Add(1 * time.Second)
+				stopTime = stopTime.Add(1 * time.Second)
 				pitr = fmt.Sprintf("%s+00", stopTime.Format("2006-01-02 15:04:05"))
 			}
 
