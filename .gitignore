@@ -1,5 +1,6 @@
 /bin/kubectl-pgo
 /bin/kubectl-pgo-*-*
 .vscode
+.idea
 .DS_Store
 /vendor/
