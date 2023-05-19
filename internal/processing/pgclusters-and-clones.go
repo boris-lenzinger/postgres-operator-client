@@ -11,7 +11,7 @@ import (
 //   - repoDataSource is the repo used to generate the clone
 //   - targetNamespace is where the clone must be built. If empty, indicates the same
 //     namespace as the original cluster
-func GenerateCloneDefinitionWithLocalStorageFrom(sourceCluster *unstructured.Unstructured, repoDataSource string, targetNamespace, pitr string) (*unstructured.Unstructured, error) {
+func GenerateCloneDefinitionWithLocalStorageFrom(sourceCluster *unstructured.Unstructured, repoDataSource string, targetNamespace, pitr string, lastBackup bool) (*unstructured.Unstructured, error) {
 	clone := unstructured.Unstructured{}
 	clone.SetAPIVersion(sourceCluster.GetAPIVersion())
 	clone.SetKind(sourceCluster.GetKind())
@@ -23,7 +23,7 @@ func GenerateCloneDefinitionWithLocalStorageFrom(sourceCluster *unstructured.Uns
 		targetNamespace = sourceCluster.GetNamespace()
 	}
 	clone.SetNamespace(targetNamespace)
-	spec["dataSource"] = generateDataSourceSection(sourceCluster.GetName(), repoDataSource, sourceCluster.GetNamespace(), pitr)
+	spec["dataSource"] = generateDataSourceSection(sourceCluster.GetName(), repoDataSource, sourceCluster.GetNamespace(), pitr, lastBackup)
 
 	if repoDataSource != "" {
 		if !repoExistsForCluster(repoDataSource, sourceCluster) {
@@ -45,7 +45,7 @@ func GenerateCloneDefinitionWithLocalStorageFrom(sourceCluster *unstructured.Uns
 	return &clone, nil
 }
 
-func generateDataSourceSection(sourceClusterName, repoDataSource, sourceNamespace, pitr string) map[string]interface{} {
+func generateDataSourceSection(sourceClusterName, repoDataSource, sourceNamespace, pitr string, lastBackup bool) map[string]interface{} {
 	dataSourceSection := make(map[string]interface{})
 	postgresCluster := make(map[string]interface{})
 	postgresCluster["clusterName"] = sourceClusterName
@@ -53,7 +53,12 @@ func generateDataSourceSection(sourceClusterName, repoDataSource, sourceNamespac
 	if sourceNamespace != "" {
 		postgresCluster["clusterNamespace"] = sourceNamespace
 	}
-	if pitr != "" {
+	switch {
+	case lastBackup:
+		options := make([]string, 1)
+		options[0] = "--type=immediate"
+		postgresCluster["options"] = options
+	case pitr != "":
 		//options:
 		//	- --type=time
 		//	- --target="2021-06-09 14:15:11-04"
