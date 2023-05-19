@@ -2,11 +2,9 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/crunchydata/postgres-operator-client/internal"
 	"github.com/crunchydata/postgres-operator-client/internal/apis/postgres-operator.crunchydata.com/v1beta1"
-	"github.com/crunchydata/postgres-operator-client/internal/data"
 	"github.com/crunchydata/postgres-operator-client/internal/display"
 	"github.com/crunchydata/postgres-operator-client/internal/processing"
 	"github.com/pkg/errors"
@@ -14,8 +12,6 @@ import (
 	yaml "gopkg.in/yaml.v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"regexp"
-	"sort"
-	"time"
 )
 
 // holds value option repoName passed on the command line. This option determines
@@ -91,33 +87,7 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 				targetNamespace = toNamespace
 			}
 
-			if lastBackup {
-				stdout, stderr, err := processing.GetExistingBackups(restConfig, targetNamespace, args[0], fromRepo, "json")
-				if err != nil {
-					return err
-				}
-				if stderr != "" {
-					return fmt.Errorf("failed to get backup for repo %s due to %s", fromRepo, stderr)
-				}
-				var backupInfo []data.BackupInfo
-				err = json.Unmarshal([]byte(stdout), &backupInfo)
-				if err != nil {
-					return err
-				}
-				backupsList := backupInfo[0].Backups
-
-				// reverse sort
-				sort.Slice(backupsList, func(i, j int) bool {
-					return backupsList[i].StopStartTime.Stop > backupsList[j].StopStartTime.Stop
-				})
-				stopTime := time.Unix(backupsList[0].StopStartTime.Stop, 0)
-				stopTime = stopTime.UTC()
-				// make sure to set the pitr right after the backup
-				stopTime = stopTime.Add(1 * time.Second)
-				pitr = fmt.Sprintf("%s+00", stopTime.Format("2006-01-02 15:04:05"))
-			}
-
-			clone, err := processing.GenerateCloneDefinitionWithLocalStorageFrom(clusterToClone, fromRepo, targetNamespace, pitr)
+			clone, err := processing.GenerateCloneDefinitionWithLocalStorageFrom(clusterToClone, fromRepo, targetNamespace, pitr, lastBackup)
 			if err != nil {
 				return errors.Wrap(err, "failed to generate definition of clone")
 			}
