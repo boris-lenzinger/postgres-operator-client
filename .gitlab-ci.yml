@@ -35,7 +35,7 @@ build:       # This job runs in the build stage, which runs first.
 build-release:
   artifacts:
     paths:
-      - /bin/${APP_NAME}-linux-amd64
+      - ${APP_NAME}-linux-amd64
   stage: build
   tags:
     - k8sadmin
@@ -47,6 +47,7 @@ build-release:
         -v $PWD:/myapp \
         -w /myapp \
         harbor.mutual31.k8s.recouv/docker-hub-proxy/library/golang make build
+    - mv bin/${APP_NAME}-linux-amd64 ${APP_NAME}-linux-amd64
     - echo "Compile complete for release."
 
 upload:
