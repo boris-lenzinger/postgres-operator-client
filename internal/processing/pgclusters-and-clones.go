@@ -3,6 +3,7 @@ package processing
 import (
 	"fmt"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"strings"
 )
 
 // GenerateCloneDefinitionWithLocalStorageFrom creates an in-memory object containing
@@ -75,9 +76,31 @@ func cloneBackupParametersButConfigureLocalStorage(sourceBackupConf map[string]i
 	backupConf := make(map[string]interface{})
 	pgbackrestConf := make(map[string]interface{})
 	sourcePgBackrestConf := sourceBackupConf["pgbackrest"].(map[string]interface{})
-	for _, key := range []string{"configuration", "global", "jobs", "manual", "metadata", "repoHost", "sidecars"} {
+	for _, key := range []string{"configuration", "jobs", "metadata", "repoHost", "sidecars"} {
 		pgbackrestConf[key] = sourcePgBackrestConf[key]
 	}
+	global := make(map[string]interface{})
+	sourceGlobal := sourcePgBackrestConf["global"].(map[string]interface{})
+	for k, v := range sourceGlobal {
+		if strings.HasPrefix(k, "repo2") {
+			continue
+		}
+		global[k] = v
+	}
+	pgbackrestConf["global"] = global
+
+	manual := make(map[string]interface{})
+	if sourcePgBackrestConf["manual"] != nil {
+		sourceManual := sourcePgBackrestConf["manual"].(map[string]interface{})
+		for k, v := range sourceManual {
+			if k == "repoName" {
+				v = "repo1"
+			}
+			manual[k] = v
+		}
+		pgbackrestConf["manual"] = manual
+	}
+
 	var repos []map[string]interface{}
 	sourceRepos := sourcePgBackrestConf["repos"].([]interface{})
 	schedules := make(map[string]interface{})

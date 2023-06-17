@@ -10,6 +10,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	yaml "gopkg.in/yaml.v2"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"regexp"
 )
@@ -92,6 +93,12 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 				return errors.Wrap(err, "failed to generate definition of clone")
 			}
 
+			var additionalConfigPgBackrest v1.ConfigMap
+			if !processing.HasPgbackrestAdditionalConfig(clone) {
+				additionalConfigPgBackrest = processing.GenerateVerboseConfigForPgBackrest()
+				processing.AddPgBackrestAdditionalConfigurationToClone(clone, additionalConfigPgBackrest)
+			}
+
 			// this might be requested by the user to check the clone's YAML definition
 			if showYamlOfClone {
 				content, err := yaml.Marshal(clone)
@@ -114,6 +121,13 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 				configMapsToDelete, secretsToDelete, err = processing.DumpConfigMapsAndSecretsIfNeeded(clientK8s, clusterToClone, targetNamespace, overrideConfigMapsAndSecrets)
 				if err != nil {
 					return errors.Wrap(err, "failed to dump objects before clone creation")
+				}
+				if additionalConfigPgBackrest.Name != "" {
+					cm, err := clientK8s.CoreV1().ConfigMaps(targetNamespace).Create(context.TODO(), &additionalConfigPgBackrest, metav1.CreateOptions{})
+					if err != nil {
+						return errors.Wrap(err, "failed to create configmap for pgbackrest configuration before clone creation")
+					}
+					configMapsToDelete = append(configMapsToDelete, cm.Name)
 				}
 			}
 
