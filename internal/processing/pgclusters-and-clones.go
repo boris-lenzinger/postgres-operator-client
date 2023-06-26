@@ -34,7 +34,9 @@ func GenerateCloneDefinitionWithLocalStorageFrom(sourceCluster *unstructured.Uns
 
 	specSourceCluster := sourceCluster.Object["spec"].(map[string]interface{})
 	// copy with the exact same content the following fields under spec
-	for _, key := range []string{"monitoring", "openshift", "patroni", "port", "postgresVersion", "shutdown", "users"} {
+	// ignoring monitoring on purpose since it causes issues with the ccp_monitoring
+	// password. Not useful currently so ignoring it.
+	for _, key := range []string{"openshift", "patroni", "port", "postgresVersion", "shutdown", "users"} {
 		spec[key] = specSourceCluster[key]
 	}
 	if specSourceCluster["metadata"] != nil {
