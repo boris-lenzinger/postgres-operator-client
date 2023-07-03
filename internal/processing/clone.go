@@ -6,6 +6,10 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+func GenerateCloneName(sourceClusterName string) string {
+	return fmt.Sprintf("clone-%s", sourceClusterName)
+}
+
 func HasPgbackrestAdditionalConfig(clone *unstructured.Unstructured) bool {
 	if clone == nil {
 		return false

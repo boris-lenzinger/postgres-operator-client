@@ -93,6 +93,13 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 				return errors.Wrap(err, "failed to generate definition of clone")
 			}
 
+			// Add network policies if there are some in the namespace that targets the database
+			err = processing.AddNetworkPoliciesIfRequired(clientK8s, restConfig, clusterToClone)
+			if err != nil {
+				return fmt.Errorf("failed to add network policies %w", err)
+			}
+			// postgres-operator.crunchydata.com/cluster=clone-cedito-jahiapg
+
 			var additionalConfigPgBackrest v1.ConfigMap
 			if !processing.HasPgbackrestAdditionalConfig(clone) {
 				additionalConfigPgBackrest = processing.GenerateVerboseConfigForPgBackrest()
@@ -139,6 +146,7 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 					display.ReportFailure(fmt.Sprintf("creation of clone failed. Since target namespace is different from source namespace, deletion of dumped resources to leave the space clean"), err)
 					processing.DeleteConfigMaps(clientK8s, configMapsToDelete, targetNamespace)
 					processing.DeleteSecrets(clientK8s, secretsToDelete, targetNamespace)
+					processing.DeleteNetworkPoliciesIfRequired(clientK8s, restConfig, targetNamespace)
 				}
 
 				return errors.Wrapf(err, "failed to clone cluster %s/%s", clusterToClone.GetNamespace(), clusterToClone.GetName())
