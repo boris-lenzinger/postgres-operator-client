@@ -43,6 +43,7 @@ func addNativeNetworkPoliciesIfRequired(clientK8s *kubernetes.Clientset, cluster
 	if len(np.Items) == 0 {
 		return nil
 	}
+	fmt.Println("Found network policy in namespace. Creating network policy to give access to clone pods to source cluster.")
 	nativeNPNotPresent := true
 searchForNativeNP:
 	for _, policy := range np.Items {
@@ -90,7 +91,10 @@ searchForNativeNP:
 	npPeer = networkingv1.NetworkPolicyPeer{}
 	npPeer.PodSelector.MatchLabels = make(map[string]string)
 	npPeer.PodSelector.MatchLabels["postgres-operator.crunchydata.com/cluster"] = clusterToClone.GetName()
-	egressRule.To = []networkingv1.NetworkPolicyPeer{npPeer}
+	toCoreDNS := networkingv1.NetworkPolicyPeer{}
+	toCoreDNS.PodSelector.MatchLabels = make(map[string]string)
+	toCoreDNS.PodSelector.MatchLabels["k8s-app"] = "kube-dns"
+	egressRule.To = []networkingv1.NetworkPolicyPeer{npPeer, toCoreDNS}
 	allowOutgoingFromCloneToCluster.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{egressRule}
 
 	_, err = clientK8s.NetworkingV1().NetworkPolicies(ns).Create(context.TODO(), &allowOutgoingFromCloneToCluster, v1.CreateOptions{})
@@ -111,7 +115,9 @@ func addCiliumNetworkPoliciesIfRequired(restConfig *rest.Config, clusterToClone 
 		return err
 	}
 
-	cnpResource := schema.GroupVersionResource{Version: "v2", Group: "cilium.io", Resource: "CiliumNetworkPolicy"}
+	// warning : keep the resource name in lowercase else the kubernetes API
+	// will report a 404 not found
+	cnpResource := schema.GroupVersionResource{Version: "v2", Group: "cilium.io", Resource: "ciliumnetworkpolicies"}
 	ciliumNetworkPolicies, err := client.Resource(cnpResource).Namespace(clusterToClone.GetNamespace()).List(context.TODO(), v1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to list cilium network policies %w", err)
@@ -120,6 +126,9 @@ func addCiliumNetworkPoliciesIfRequired(restConfig *rest.Config, clusterToClone 
 	if len(ciliumNetworkPolicies.Items) == 0 {
 		return nil
 	}
+
+	fmt.Printf("%d Cilium network policies detected. Adding our own to get access to the cluster\n", len(ciliumNetworkPolicies.Items))
+	fmt.Printf("Those policies are labeled with %s=%s so you can delete them easily.\n", policyLabelName, policyLabelValue)
 
 	cnpAllowIncomingFlowFromCloneToSourceUnstructured, err := generateCiliumNetworkPolicyCloneToSourceIngress(clusterToClone)
 	if err != nil {
@@ -145,7 +154,57 @@ func addCiliumNetworkPoliciesIfRequired(restConfig *rest.Config, clusterToClone 
 		return err
 	}
 
+	allowClusterIntraPodCommunication := generateCiliumNetworkPolicyCloneIntra(GenerateCloneName(clusterToClone.GetName()))
+
+	_, err = client.Resource(cnpResource).
+		Namespace(clusterToClone.GetNamespace()).
+		Create(context.TODO(), allowClusterIntraPodCommunication, v1.CreateOptions{})
+	if err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func generateCiliumNetworkPolicyCloneIntra(cloneName string) *unstructured.Unstructured {
+	var ciliumNetworkPolicy unstructured.Unstructured
+	_ = yaml.Unmarshal([]byte(fmt.Sprintf(`
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: %[1]s-free-intra-cluster                                           
+spec:
+  egress:
+  - toEndpoints:
+    - matchLabels:
+        postgres-operator.crunchydata.com/cluster: %[1]s
+  - toEndpoints:
+    - matchLabels:
+        io.kubernetes.pod.namespace: kube-system
+        k8s-app: kube-dns
+    toPorts:
+    - ports:
+      - port: "53"
+        protocol: UDP
+  - toEntities:
+    - cluster
+    toPorts:
+    - ports:
+      - port: "6443"
+  - toEntities:
+    - world
+    toPorts:
+    - ports:
+      - port: "443"
+  endpointSelector:
+    matchLabels:
+      postgres-operator.crunchydata.com/cluster: %[1]s           
+  ingress:
+  - fromEndpoints:
+    - matchLabels:
+        postgres-operator.crunchydata.com/cluster: %[1]s`, cloneName)), &ciliumNetworkPolicy)
+
+	return &ciliumNetworkPolicy
 }
 
 func DeleteNetworkPoliciesIfRequired(clientK8s *kubernetes.Clientset, restConfig *rest.Config, targetNamespace string) {
@@ -213,6 +272,17 @@ spec:
     - toEndpoints:
         - matchLabels:
             postgres-operator.crunchydata.com/cluster: %s
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+          rules:
+            dns:
+              - matchPattern: "*"
 `,
 		GenerateCloneName(clusterToClone.GetName()),
 		clusterToClone.GetName(),
