@@ -131,16 +131,16 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 				if err != nil {
 					return errors.Wrap(err, "failed to dump objects before clone creation")
 				}
-				if additionalConfigPgBackrest.Name != "" {
-					fmt.Printf("Creating the additional configmap for pgbackrest with name %s...\n", additionalConfigPgBackrest.Name)
-					cm, err := clientK8s.CoreV1().ConfigMaps(targetNamespace).Create(context.TODO(), &additionalConfigPgBackrest, metav1.CreateOptions{})
-					if err != nil {
-						return errors.Wrap(err, "failed to create configmap for pgbackrest configuration before clone creation")
-					}
-					configMapsToDelete = append(configMapsToDelete, cm.Name)
-				} else {
-					fmt.Println("Not creating additional configmap for pgbackrest...")
+			}
+			if additionalConfigPgBackrest.Name != "" {
+				fmt.Printf("Creating the additional configmap for pgbackrest with name %s...\n", additionalConfigPgBackrest.Name)
+				cm, err := clientK8s.CoreV1().ConfigMaps(clone.GetNamespace()).Create(context.TODO(), &additionalConfigPgBackrest, metav1.CreateOptions{})
+				if err != nil {
+					return errors.Wrap(err, "failed to create configmap for pgbackrest configuration before clone creation")
 				}
+				configMapsToDelete = append(configMapsToDelete, cm.Name)
+			} else {
+				fmt.Println("Not creating additional configmap for pgbackrest...")
 			}
 
 			// Create the clone
