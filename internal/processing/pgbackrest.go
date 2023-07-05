@@ -7,7 +7,7 @@ import (
 func GenerateVerboseConfigForPgBackrest() v1.ConfigMap {
 	cm := v1.ConfigMap{}
 	data := make(map[string]string, 1)
-	data["additionalConfig.conf"] = ` |
+	data["additionalConfig.conf"] = `
             [global]
             io-timeout=1800
             log-level-console=detail
