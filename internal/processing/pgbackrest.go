@@ -1,6 +1,8 @@
 package processing
 
-import v1 "k8s.io/api/core/v1"
+import (
+	v1 "k8s.io/api/core/v1"
+)
 
 func GenerateVerboseConfigForPgBackrest() v1.ConfigMap {
 	cm := v1.ConfigMap{}

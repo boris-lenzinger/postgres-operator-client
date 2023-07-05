@@ -102,7 +102,9 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 
 			var additionalConfigPgBackrest v1.ConfigMap
 			if !processing.HasPgbackrestAdditionalConfig(clone) {
+				fmt.Println("Clone has no PGBackrest additional configuration. Adding one to make sure the restore trace is verbose and comprehensive in case of error")
 				additionalConfigPgBackrest = processing.GenerateVerboseConfigForPgBackrest()
+				additionalConfigPgBackrest.ObjectMeta.Name = fmt.Sprintf("%s-%s", processing.GenerateCloneName(clusterToClone.GetName()), additionalConfigPgBackrest.ObjectMeta.Name)
 				processing.AddPgBackrestAdditionalConfigurationToClone(clone, additionalConfigPgBackrest)
 			}
 
