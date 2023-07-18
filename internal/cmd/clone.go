@@ -115,6 +115,14 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 					return errors.Wrap(err, "failed to generate yaml for clone")
 				}
 				fmt.Printf("YAML of clone:\n%s\n", string(content))
+				content, err = yaml.Marshal(additionalConfigPgBackrest)
+				if err != nil {
+					return errors.Wrap(err, "failed to generate yaml for additional config map")
+				}
+				fmt.Printf(`---
+				# YAML of config map for addition configuration:
+				%s
+				`, string(content))
 			}
 
 			// we have to know which resources we have created, so we can delete
