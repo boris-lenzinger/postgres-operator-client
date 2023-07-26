@@ -82,14 +82,17 @@ func cloneBackupParametersButConfigureLocalStorage(sourceBackupConf map[string]i
 		pgbackrestConf[key] = sourcePgBackrestConf[key]
 	}
 	global := make(map[string]interface{})
-	sourceGlobal := sourcePgBackrestConf["global"].(map[string]interface{})
-	for k, v := range sourceGlobal {
-		if strings.HasPrefix(k, "repo2") {
-			continue
+	rawSourceGlobal := sourcePgBackrestConf["global"]
+	if rawSourceGlobal != nil {
+		sourceGlobal := rawSourceGlobal.(map[string]interface{})
+		for k, v := range sourceGlobal {
+			if strings.HasPrefix(k, "repo2") {
+				continue
+			}
+			global[k] = v
 		}
-		global[k] = v
+		pgbackrestConf["global"] = global
 	}
-	pgbackrestConf["global"] = global
 
 	manual := make(map[string]interface{})
 	if sourcePgBackrestConf["manual"] != nil {
