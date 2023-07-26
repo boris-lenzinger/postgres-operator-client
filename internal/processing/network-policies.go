@@ -246,6 +246,24 @@ spec:
     - toEndpoints:
         - matchLabels:
             postgres-operator.crunchydata.com/cluster: %[2]s
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+    - toEntities:
+        - cluster
+      toPorts:
+        - ports:
+            - port: "6443"
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
 `, clusterToClone.GetName(), GenerateCloneName(clusterToClone.GetName()), policyLabelName, policyLabelValue)), &ciliumNetworkPolicy)
 
 	if err != nil {
