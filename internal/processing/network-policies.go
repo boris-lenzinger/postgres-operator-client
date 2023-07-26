@@ -271,7 +271,7 @@ spec:
   egress:
     - toEndpoints:
         - matchLabels:
-            postgres-operator.crunchydata.com/cluster: %s
+            postgres-operator.crunchydata.com/cluster: %[2]s
     - toEndpoints:
         - matchLabels:
             io.kubernetes.pod.namespace: kube-system
