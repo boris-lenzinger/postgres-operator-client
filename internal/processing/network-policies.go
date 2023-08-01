@@ -154,7 +154,7 @@ func addCiliumNetworkPoliciesIfRequired(restConfig *rest.Config, clusterToClone 
 		return err
 	}
 
-	allowClusterIntraPodCommunication := generateCiliumNetworkPolicyCloneIntra(GenerateCloneName(clusterToClone.GetName()))
+	allowClusterIntraPodCommunication := generateCiliumNetworkPolicyCloneIntra(cloneName)
 
 	_, err = client.Resource(cnpResource).
 		Namespace(clusterToClone.GetNamespace()).
@@ -231,7 +231,7 @@ func generateCiliumNetworkPolicyCloneToSourceIngress(clusterToClone *unstructure
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: free-traffic-from%[1]s-with-%[2]s
+  name: free-traffic-from-%[1]s-with-%[2]s
   labels:
     %[3]s: %[4]s
 spec:
