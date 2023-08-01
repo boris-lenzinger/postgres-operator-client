@@ -12,13 +12,13 @@ import (
 //   - repoDataSource is the repo used to generate the clone
 //   - targetNamespace is where the clone must be built. If empty, indicates the same
 //     namespace as the original cluster
-func GenerateCloneDefinitionWithLocalStorageFrom(sourceCluster *unstructured.Unstructured, repoDataSource string, targetNamespace, pitr string, lastBackup bool) (*unstructured.Unstructured, error) {
+func GenerateCloneDefinitionWithLocalStorageFrom(sourceCluster *unstructured.Unstructured, cloneName string, repoDataSource string, targetNamespace, pitr string, lastBackup bool) (*unstructured.Unstructured, error) {
 	clone := unstructured.Unstructured{}
 	clone.SetAPIVersion(sourceCluster.GetAPIVersion())
 	clone.SetKind(sourceCluster.GetKind())
 	clone.SetAnnotations(filterHelmManagement(sourceCluster.GetAnnotations()))
 	clone.SetLabels(filterHelmManagement(sourceCluster.GetLabels()))
-	clone.SetName(fmt.Sprintf("clone-%s", sourceCluster.GetName()))
+	clone.SetName(cloneName)
 	spec := make(map[string]interface{})
 	if targetNamespace == "" {
 		targetNamespace = sourceCluster.GetNamespace()

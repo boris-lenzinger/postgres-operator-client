@@ -13,6 +13,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"regexp"
+	"time"
 )
 
 // holds value option repoName passed on the command line. This option determines
@@ -76,6 +77,8 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 				return errors.Wrapf(err, "failed to get cluster %q in namespace %q", clusterName, namespace)
 			}
 
+			cloneName := processing.GenerateCloneName(clusterName)
+
 			if pitr != "" {
 				err = processing.IsValidPitr(restConfig, namespace, clusterToClone, fromRepo, pitr)
 				if err != nil {
@@ -88,13 +91,13 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 				targetNamespace = toNamespace
 			}
 
-			clone, err := processing.GenerateCloneDefinitionWithLocalStorageFrom(clusterToClone, fromRepo, targetNamespace, pitr, lastBackup)
+			clone, err := processing.GenerateCloneDefinitionWithLocalStorageFrom(clusterToClone, cloneName, fromRepo, targetNamespace, pitr, lastBackup)
 			if err != nil {
 				return errors.Wrap(err, "failed to generate definition of clone")
 			}
 
 			// Add network policies if there are some in the namespace that targets the database
-			err = processing.AddNetworkPoliciesIfRequired(clientK8s, restConfig, clusterToClone)
+			err = processing.AddNetworkPoliciesIfRequired(clientK8s, restConfig, clusterToClone, cloneName)
 			if err != nil {
 				return fmt.Errorf("failed to add network policies %w", err)
 			}
@@ -150,6 +153,8 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 			} else {
 				fmt.Println("Not creating additional configmap for pgbackrest...")
 			}
+			fmt.Println("Sleeping 5 seconds to let the clone create the potential missing pgbackrest-config")
+			time.Sleep(5 * time.Second)
 
 			// Create the clone
 			_, err = clientCrunchy.Namespace(targetNamespace).Create(context.TODO(), clone, metav1.CreateOptions{})

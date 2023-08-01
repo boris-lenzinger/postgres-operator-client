@@ -18,14 +18,14 @@ const (
 	policyLabelValue = "automatic-test-backup-restore"
 )
 
-func AddNetworkPoliciesIfRequired(clientK8s *kubernetes.Clientset, restConfig *rest.Config, clusterToClone *unstructured.Unstructured) error {
-	err := addNativeNetworkPoliciesIfRequired(clientK8s, clusterToClone)
+func AddNetworkPoliciesIfRequired(clientK8s *kubernetes.Clientset, restConfig *rest.Config, clusterToClone *unstructured.Unstructured, cloneName string) error {
+	err := addNativeNetworkPoliciesIfRequired(clientK8s, clusterToClone, cloneName)
 	// First, check if there are network policies that target the current cluster.
 	if err != nil {
 		return err
 	}
 
-	err = addCiliumNetworkPoliciesIfRequired(restConfig, clusterToClone)
+	err = addCiliumNetworkPoliciesIfRequired(restConfig, clusterToClone, cloneName)
 	if err != nil {
 		return err
 	}
@@ -33,7 +33,7 @@ func AddNetworkPoliciesIfRequired(clientK8s *kubernetes.Clientset, restConfig *r
 	return nil
 }
 
-func addNativeNetworkPoliciesIfRequired(clientK8s *kubernetes.Clientset, clusterToClone *unstructured.Unstructured) error {
+func addNativeNetworkPoliciesIfRequired(clientK8s *kubernetes.Clientset, clusterToClone *unstructured.Unstructured, cloneName string) error {
 	ns := clusterToClone.GetNamespace()
 
 	np, err := clientK8s.NetworkingV1().NetworkPolicies(ns).List(context.TODO(), v1.ListOptions{})
@@ -64,14 +64,14 @@ searchForNativeNP:
 	allowIncomingConnexionFromClone := networkingv1.NetworkPolicy{}
 	allowIncomingConnexionFromClone.ObjectMeta.Namespace = ns
 	allowIncomingConnexionFromClone.ObjectMeta.Labels[policyLabelName] = policyLabelValue
-	ruleName := "allow-incoming-from-clone"
+	ruleName := fmt.Sprintf("%s-allow-incoming-from-%s", clusterToClone.GetName(), cloneName)
 	allowIncomingConnexionFromClone.ObjectMeta.Name = ruleName
 	allowIncomingConnexionFromClone.Spec.PodSelector.MatchLabels = make(map[string]string)
 	allowIncomingConnexionFromClone.Spec.PodSelector.MatchLabels["postgres-operator.crunchydata.com/cluster"] = clusterToClone.GetName()
 	ingressRule := networkingv1.NetworkPolicyIngressRule{}
 	npPeer := networkingv1.NetworkPolicyPeer{}
 	npPeer.PodSelector.MatchLabels = make(map[string]string)
-	npPeer.PodSelector.MatchLabels["postgres-operator.crunchydata.com/cluster"] = GenerateCloneName(clusterToClone.GetName())
+	npPeer.PodSelector.MatchLabels["postgres-operator.crunchydata.com/cluster"] = cloneName
 	ingressRule.From = []networkingv1.NetworkPolicyPeer{npPeer}
 	allowIncomingConnexionFromClone.Spec.Ingress = []networkingv1.NetworkPolicyIngressRule{ingressRule}
 
@@ -83,10 +83,10 @@ searchForNativeNP:
 	allowOutgoingFromCloneToCluster := networkingv1.NetworkPolicy{}
 	allowOutgoingFromCloneToCluster.ObjectMeta.Namespace = ns
 	allowOutgoingFromCloneToCluster.ObjectMeta.Labels[policyLabelName] = policyLabelValue
-	ruleName = "allow-outgoing-from-clone-to-source-cluster"
+	ruleName = fmt.Sprintf("allow-outgoing-from-%s-to-%s", cloneName, clusterToClone.GetName())
 	allowOutgoingFromCloneToCluster.ObjectMeta.Name = ruleName
 	allowOutgoingFromCloneToCluster.Spec.PodSelector.MatchLabels = make(map[string]string)
-	allowOutgoingFromCloneToCluster.Spec.PodSelector.MatchLabels["postgres-operator.crunchydata.com/cluster"] = GenerateCloneName(clusterToClone.GetName())
+	allowOutgoingFromCloneToCluster.Spec.PodSelector.MatchLabels["postgres-operator.crunchydata.com/cluster"] = cloneName
 	egressRule := networkingv1.NetworkPolicyEgressRule{}
 	npPeer = networkingv1.NetworkPolicyPeer{}
 	npPeer.PodSelector.MatchLabels = make(map[string]string)
@@ -105,7 +105,7 @@ searchForNativeNP:
 	return nil
 }
 
-func addCiliumNetworkPoliciesIfRequired(restConfig *rest.Config, clusterToClone *unstructured.Unstructured) error {
+func addCiliumNetworkPoliciesIfRequired(restConfig *rest.Config, clusterToClone *unstructured.Unstructured, cloneName string) error {
 	// Syntax in case of ciliumnetworkpolicies
 	// endpointSelector:
 	//   matchLabels:
@@ -130,7 +130,7 @@ func addCiliumNetworkPoliciesIfRequired(restConfig *rest.Config, clusterToClone 
 	fmt.Printf("%d Cilium network policies detected. Adding our own to get access to the cluster\n", len(ciliumNetworkPolicies.Items))
 	fmt.Printf("Those policies are labeled with %s=%s so you can delete them easily.\n", policyLabelName, policyLabelValue)
 
-	cnpAllowIncomingFlowFromCloneToSourceUnstructured, err := generateCiliumNetworkPolicyCloneToSourceIngress(clusterToClone)
+	cnpAllowIncomingFlowFromCloneToSourceUnstructured, err := generateCiliumNetworkPolicyCloneToSourceIngress(clusterToClone, cloneName)
 	if err != nil {
 		return err
 	}
@@ -142,7 +142,7 @@ func addCiliumNetworkPoliciesIfRequired(restConfig *rest.Config, clusterToClone 
 		return err
 	}
 
-	cnpAllowEgressFlowFromCloneToSourceUnstructured, err := generateCiliumNetworkPolicyCloneToSourceEgress(clusterToClone)
+	cnpAllowEgressFlowFromCloneToSourceUnstructured, err := generateCiliumNetworkPolicyCloneToSourceEgress(clusterToClone, cloneName)
 	if err != nil {
 		return err
 	}
@@ -225,13 +225,13 @@ func DeleteNetworkPoliciesIfRequired(clientK8s *kubernetes.Clientset, restConfig
 			v1.ListOptions{LabelSelector: fmt.Sprintf("%s=%s", policyLabelName, policyLabelValue)})
 }
 
-func generateCiliumNetworkPolicyCloneToSourceIngress(clusterToClone *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+func generateCiliumNetworkPolicyCloneToSourceIngress(clusterToClone *unstructured.Unstructured, cloneName string) (*unstructured.Unstructured, error) {
 	var ciliumNetworkPolicy unstructured.Unstructured
 	err := yaml.Unmarshal([]byte(fmt.Sprintf(`
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: free-traffic-for-source-cluster-with-clone
+  name: free-traffic-from%[1]s-with-%[2]s
   labels:
     %[3]s: %[4]s
 spec:
@@ -264,7 +264,7 @@ spec:
       toPorts:
         - ports:
             - port: "443"
-`, clusterToClone.GetName(), GenerateCloneName(clusterToClone.GetName()), policyLabelName, policyLabelValue)), &ciliumNetworkPolicy)
+`, clusterToClone.GetName(), cloneName, policyLabelName, policyLabelValue)), &ciliumNetworkPolicy)
 
 	if err != nil {
 		return nil, err
@@ -273,13 +273,13 @@ spec:
 	return &ciliumNetworkPolicy, nil
 }
 
-func generateCiliumNetworkPolicyCloneToSourceEgress(clusterToClone *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+func generateCiliumNetworkPolicyCloneToSourceEgress(clusterToClone *unstructured.Unstructured, cloneName string) (*unstructured.Unstructured, error) {
 	var ciliumNetworkPolicy unstructured.Unstructured
 	err := yaml.Unmarshal([]byte(fmt.Sprintf(`
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: free-traffic-for-clone-cluster-to-source
+  name: free-traffic-for-%[1]s-to-%[2]s
   labels:
     %[3]s: %[4]s
 spec:
@@ -302,7 +302,7 @@ spec:
             dns:
               - matchPattern: "*"
 `,
-		GenerateCloneName(clusterToClone.GetName()),
+		cloneName,
 		clusterToClone.GetName(),
 		policyLabelName,
 		policyLabelValue),
