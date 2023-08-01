@@ -24,6 +24,7 @@ var showYamlOfClone bool
 var overrideConfigMapsAndSecrets bool
 var pitr string
 var lastBackup bool
+var withName string
 
 // newBackupCommand returns the backup command of the PGO plugin.
 // It optionally takes a `repoName` and `options` flag, which it uses
@@ -78,6 +79,9 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 			}
 
 			cloneName := processing.GenerateCloneName(clusterName)
+			if withName != "" {
+				cloneName = withName
+			}
 
 			if pitr != "" {
 				err = processing.IsValidPitr(restConfig, namespace, clusterToClone, fromRepo, pitr)
@@ -107,7 +111,7 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 			if !processing.HasPgbackrestAdditionalConfig(clone) {
 				fmt.Println("Clone has no PGBackrest additional configuration. Adding one to make sure the restore trace is verbose and comprehensive in case of error")
 				additionalConfigPgBackrest = processing.GenerateVerboseConfigForPgBackrest()
-				additionalConfigPgBackrest.ObjectMeta.Name = fmt.Sprintf("%s-%s", processing.GenerateCloneName(clusterToClone.GetName()), additionalConfigPgBackrest.ObjectMeta.Name)
+				additionalConfigPgBackrest.ObjectMeta.Name = fmt.Sprintf("%s-%s", cloneName, additionalConfigPgBackrest.ObjectMeta.Name)
 				processing.AddPgBackrestAdditionalConfigurationToClone(clone, additionalConfigPgBackrest)
 			}
 
@@ -169,7 +173,7 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 
 				return errors.Wrapf(err, "failed to clone cluster %s/%s", clusterToClone.GetNamespace(), clusterToClone.GetName())
 			}
-			display.ReportSuccess(fmt.Sprintf("Clone of cluster %q successfully created as %q", clusterName, clone.GetName()))
+			display.ReportSuccess(fmt.Sprintf("Clone of cluster %q successfully created as %q", clusterName, cloneName))
 
 			return nil
 		},
@@ -181,6 +185,7 @@ func newCloneCommand(config *internal.Config) *cobra.Command {
 	cmd.Flags().BoolVarP(&overrideConfigMapsAndSecrets, "overrides-configs", "", false, "request to override configmaps and secrets if they already exist")
 	cmd.Flags().StringVarP(&pitr, "pitr", "", "", "the point in time at which you want the clone to be restored to. Format is '2022-12-28 15:47:38+01'")
 	cmd.Flags().BoolVar(&lastBackup, "last-backup", false, "Requires to use the last backup. The command will compute which backup is the last one and choose it.")
+	cmd.Flags().StringVarP(&withName, "with-name", "", "", "the name to be used to generate the clone")
 
 	return cmd
 }
