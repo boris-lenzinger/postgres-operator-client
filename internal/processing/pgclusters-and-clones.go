@@ -16,7 +16,7 @@ func GenerateCloneDefinitionWithLocalStorageFrom(sourceCluster *unstructured.Uns
 	clone := unstructured.Unstructured{}
 	clone.SetAPIVersion(sourceCluster.GetAPIVersion())
 	clone.SetKind(sourceCluster.GetKind())
-	clone.SetAnnotations(filterHelmManagement(sourceCluster.GetAnnotations()))
+	clone.SetAnnotations(filterLatestConfiguration(filterHelmManagement(sourceCluster.GetAnnotations())))
 	clone.SetLabels(filterHelmManagement(sourceCluster.GetLabels()))
 	clone.SetName(cloneName)
 	spec := make(map[string]interface{})
@@ -78,7 +78,7 @@ func cloneBackupParametersButConfigureLocalStorage(sourceBackupConf map[string]i
 	backupConf := make(map[string]interface{})
 	pgbackrestConf := make(map[string]interface{})
 	sourcePgBackrestConf := sourceBackupConf["pgbackrest"].(map[string]interface{})
-	for _, key := range []string{"configuration", "jobs", "metadata", "repoHost", "sidecars"} {
+	for _, key := range []string{"jobs", "metadata", "repoHost", "sidecars"} {
 		pgbackrestConf[key] = sourcePgBackrestConf[key]
 	}
 	global := make(map[string]interface{})
@@ -92,6 +92,23 @@ func cloneBackupParametersButConfigureLocalStorage(sourceBackupConf map[string]i
 			global[k] = v
 		}
 		pgbackrestConf["global"] = global
+	}
+
+	fmt.Println("********** HANDLING CONFIGURATION ************")
+	if sourcePgBackrestConf["configuration"] != nil {
+		sourceConfiguration := sourcePgBackrestConf["configuration"].([]interface{})
+		var configuration []interface{}
+		fmt.Println("********** AFFICHAGE ELEMENTS DANS LA CONFIGURATION **********")
+		for _, e := range sourceConfiguration {
+			m := e.(map[string]interface{})
+			if m["secret"] != nil {
+				//name := m["secret"].(map[string]interface{})["name"].(string)
+				//secret, err :=
+				continue
+			}
+			configuration = append(configuration, m)
+		}
+		pgbackrestConf["configuration"] = configuration
 	}
 
 	manual := make(map[string]interface{})

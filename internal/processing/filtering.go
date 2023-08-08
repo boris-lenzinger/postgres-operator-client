@@ -12,6 +12,16 @@ func filterHelmManagement(values map[string]string) map[string]string {
 	}
 	return filteredValues
 }
+func filterLatestConfiguration(values map[string]string) map[string]string {
+	filteredValues := make(map[string]string)
+	for k, v := range values {
+		if k == "kubectl.kubernetes.io/last-applied-configuration" {
+			continue
+		}
+		filteredValues[k] = v
+	}
+	return filteredValues
+}
 
 func filterMetadata(metadata map[string]interface{}) interface{} {
 	filtered := make(map[string]interface{})
