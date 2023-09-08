@@ -29,7 +29,7 @@ import (
 )
 
 // store the current PGO CLI version
-const clientVersion = "v0.6.0-acoss"
+const clientVersion = "v0.6.0-internal"
 
 // NewPGOCommand returns the root command of the PGO plugin. This command
 // prints the same information as its --help flag: the available subcommands
@@ -108,6 +108,7 @@ func NewPGOCommand(stdin io.Reader, stdout, stderr io.Writer) *cobra.Command {
 	root.AddCommand(newSupportCommand(config))
 	root.AddCommand(newVersionCommand(config))
 	root.AddCommand(newReplicaCountClusterCommand(config))
+	root.AddCommand(newStatusCommand(config))
 
 	return root
 }

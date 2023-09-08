@@ -31,20 +31,6 @@ import (
 var replicaCountValue int
 var allClusters bool
 
-// newReplicaCountCommand returns the delete subcommand of the PGO plugin.
-// Subcommands of replica-count will be used to update the replica field of clusters.
-func newReplicaCountCommand(config *internal.Config) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "replica-count",
-		Short: "Upgrades the number of replicas (including the master) to a given value. 0 and negative values are rejected.",
-		Long:  "Upgrades the number of replicas (including the master) to a given value. 0 and negative values are rejected.",
-	}
-
-	cmd.AddCommand(newReplicaCountClusterCommand(config))
-
-	return cmd
-}
-
 // newReplicaCountClusterCommand returns the delete cluster subcommand.
 // delete cluster will take a cluster name as an argument
 func newReplicaCountClusterCommand(config *internal.Config) *cobra.Command {
