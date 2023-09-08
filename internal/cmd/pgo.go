@@ -29,7 +29,7 @@ import (
 )
 
 // store the current PGO CLI version
-const clientVersion = "v0.6.0-internal"
+const clientVersion = "v0.7.0-internal"
 
 // NewPGOCommand returns the root command of the PGO plugin. This command
 // prints the same information as its --help flag: the available subcommands
